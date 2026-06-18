@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Daily Dashboard — Maple Cold Caller{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Daily Recruiter Dashboard</h1>
+{% end %}
+
+{% block header_actions %}
+<span class="text-xs text-slate-500">{{ today }}</span>
+{% end %}
+
+{% block content %}
+
+<!-- Pipeline Funnel -->
+<div class="mb-6">
+  <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Pipeline Funnel</h2>
+  <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+    {% for s in ['found', 'contacted', 'replied', 'qualified', 'interview', 'placed', 'rejected'] %}
+    {% set count = stats.get('status_' + s, 0) %}
+    <a href="/candidates?status={{ s }}"
+       class="bg-slate-800 border border-slate-700 rounded-xl p-3 text-center hover:border-indigo-500 transition-colors">
+      <p class="text-2xl font-bold text-white">{{ count }}</p>
+      <p class="text-xs text-slate-400 mt-0.5 capitalize">{{ s }}</p>
+    </a>
+    {% end %}
+  </div>
+</div>
+
+<!-- Three-column grid -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <!-- Due Follow-Ups -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+      <h2 class="font-semibold text-white text-sm">⏰ Due Follow-Ups</h2>
+      <a href="/outreach?status=sent" class="text-xs text-indigo-400 hover:text-indigo-300">All outreach →</a>
+    </div>
+    {% if due_followups %}
+    <ul class="divide-y divide-slate-700">
+      {% for o in due_followups %}
+      <li>
+        <a href="/outreach/{{ o['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-white truncate">{{ o['candidate_name'] or 'Unknown' }}</p>
+            <p class="text-xs text-slate-400 truncate">{{ o['client_name'] or 'Unknown campaign' }}</p>
+          </div>
+          <span class="badge bg-amber-900 text-amber-300">{{ o['outreach_status'] }}</span>
+        </a>
+      </li>
+      {% end %}
+    </ul>
+    {% else %}
+    <div class="px-5 py-6 text-center text-slate-500 text-sm">All caught up! 🎉</div>
+    {% end %}
+  </div>
+
+  <!-- Today's Interviews -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+      <h2 class="font-semibold text-white text-sm">📅 Today's Interviews</h2>
+      <a href="/interviews" class="text-xs text-indigo-400 hover:text-indigo-300">All interviews →</a>
+    </div>
+    {% if todays_interviews %}
+    <ul class="divide-y divide-slate-700">
+      {% for i in todays_interviews %}
+      <li>
+        <a href="/interviews/{{ i['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-white truncate">{{ i['candidate_name'] or 'Unknown' }}</p>
+            <p class="text-xs text-slate-400">{{ i['interview_time'] or 'TBD' }} · {{ i['interview_format'] or 'Video' }}</p>
+          </div>
+          <span class="badge
+            {% if i['status'] == 'scheduled' %}bg-indigo-900 text-indigo-300
+            {% elif i['status'] == 'completed' %}bg-green-900 text-green-300
+            {% elif i['status'] == 'no_show' %}bg-red-900 text-red-300
+            {% else %}bg-slate-700 text-slate-300{% end %}">{{ i['status'] }}</span>
+        </a>
+      </li>
+      {% end %}
+    </ul>
+    {% else %}
+    <div class="px-5 py-6 text-center text-slate-500 text-sm">No interviews today.</div>
+    {% end %}
+  </div>
+
+  <!-- Top Candidates by Score -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+      <h2 class="font-semibold text-white text-sm">⭐ Top Scored Candidates</h2>
+      <a href="/candidates" class="text-xs text-indigo-400 hover:text-indigo-300">All candidates →</a>
+    </div>
+    {% if top_candidates %}
+    <ul class="divide-y divide-slate-700">
+      {% for c in top_candidates %}
+      <li>
+        <a href="/candidates/{{ c['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
+          <div class="w-8 h-8 rounded-full bg-indigo-700 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+            {{ c['full_name'][0].upper() if c['full_name'] else '?' }}
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-white truncate">{{ c['full_name'] }}</p>
+            <p class="text-xs text-slate-400 truncate">{{ c['current_role'] or 'No role' }}</p>
+          </div>
+          <span class="text-sm font-bold {% if c['global_score'] and c['global_score'] >= 75 %}text-green-400{% elif c['global_score'] and c['global_score'] >= 50 %}text-amber-400{% else %}text-slate-400{% end %}">
+            {% if c['global_score'] %}{{ c['global_score'] }}{% else %}—{% end %}
+          </span>
+        </a>
+      </li>
+      {% end %}
+    </ul>
+    {% else %}
+    <div class="px-5 py-6 text-center text-slate-500 text-sm">No scored candidates yet.</div>
+    {% end %}
+  </div>
+
+</div>
+
+<!-- Bottom row -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+
+  <!-- Recent Placements -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+      <h2 class="font-semibold text-white text-sm">🏆 Recent Placements</h2>
+    </div>
+    {% if recent_placements %}
+    <ul class="divide-y divide-slate-700">
+      {% for c in recent_placements %}
+      <li>
+        <a href="/candidates/{{ c['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-white truncate">{{ c['full_name'] }}</p>
+            <p class="text-xs text-slate-400 truncate">{{ c['current_role'] or 'Cold Caller' }}</p>
+          </div>
+          <span class="badge bg-green-900 text-green-300">placed</span>
+        </a>
+      </li>
+      {% end %}
+    </ul>
+    {% else %}
+    <div class="px-5 py-6 text-center text-slate-500 text-sm">No placements yet. Keep pushing! 💪</div>
+    {% end %}
+  </div>
+
+  <!-- Active Campaigns -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+      <h2 class="font-semibold text-white text-sm">📋 Active Campaigns</h2>
+      <a href="/campaigns" class="text-xs text-indigo-400 hover:text-indigo-300">All campaigns →</a>
+    </div>
+    {% if active_campaigns_list %}
+    <ul class="divide-y divide-slate-700">
+      {% for camp in active_campaigns_list %}
+      <li>
+        <a href="/campaigns/{{ camp['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-white truncate">{{ camp['client_name'] }}</p>
+            <p class="text-xs text-slate-400 truncate">{{ camp['niche'] or 'No niche' }} · {{ camp['b2b_or_b2c'] or 'B2B' }}</p>
+          </div>
+          <span class="badge bg-green-900 text-green-300">active</span>
+        </a>
+      </li>
+      {% end %}
+    </ul>
+    {% else %}
+    <div class="px-5 py-6 text-center text-slate-500 text-sm">No active campaigns.</div>
+    {% end %}
+  </div>
+
+</div>
+
+{% end %}

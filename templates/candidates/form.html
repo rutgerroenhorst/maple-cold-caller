@@ -1,0 +1,143 @@
+{% extends "../base.html" %}
+{% block title %}{{ 'Edit' if candidate else 'New' }} Candidate — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/candidates" class="text-slate-400 hover:text-white text-sm">Candidates</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">{{ 'Edit' if candidate else 'New' }} Candidate</h1>
+</div>
+{% end %}
+
+{% block content %}
+<div class="max-w-3xl">
+  <form method="POST" action="{{ '/candidates/' + str(candidate['id']) + '/edit' if candidate else '/candidates/new' }}" class="space-y-6">
+
+    <!-- Basic Info -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Basic Info</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Full Name *</label>
+          <input type="text" name="full_name" value="{{ candidate['full_name'] if candidate else '' }}" required
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Current Role</label>
+          <input type="text" name="current_role" value="{{ candidate['current_role'] if candidate else '' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Platform Source</label>
+          <input type="text" name="platform_source" value="{{ candidate['platform_source'] if candidate else '' }}"
+                 placeholder="LinkedIn, Upwork, Referral..."
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Profile URL</label>
+          <input type="text" name="profile_url" value="{{ candidate['profile_url'] if candidate else '' }}"
+                 placeholder="https://..."
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Email</label>
+          <input type="email" name="email" value="{{ candidate['email'] if candidate else '' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Phone</label>
+          <input type="text" name="phone" value="{{ candidate['phone'] if candidate else '' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Language Level</label>
+          <select name="language_level" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['Native', 'Fluent', 'Professional', 'Conversational', 'Basic'] %}
+            <option value="{{ opt }}" {% if candidate and candidate['language_level'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Availability</label>
+          <select name="availability" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['Full-Time', 'Part-Time', 'Freelance', 'Contract'] %}
+            <option value="{{ opt }}" {% if candidate and candidate['availability'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Status</label>
+          <select name="status" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for s in ['found', 'contacted', 'replied', 'qualified', 'interview', 'placed', 'rejected'] %}
+            <option value="{{ s }}" {% if candidate and candidate['status'] == s %}selected{% end %}>{{ s.capitalize() }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div class="flex items-center gap-3 mt-2">
+          <input type="checkbox" name="commission_only_fit" id="commission" value="1"
+                 {% if candidate and candidate['commission_only_fit'] %}checked{% end %}
+                 class="rounded border-slate-600 bg-slate-900 text-indigo-600"/>
+          <label for="commission" class="text-sm text-slate-300">Commission-Only Fit</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Experience -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Experience</h2>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Past Sales Roles</label>
+        <textarea name="past_sales_roles" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['past_sales_roles'] if candidate else '' }}</textarea>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Cold Calling Experience</label>
+          <textarea name="cold_calling_experience" rows="2"
+                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['cold_calling_experience'] if candidate else '' }}</textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Appointment Setting Experience</label>
+          <textarea name="appointment_setting_experience" rows="2"
+                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['appointment_setting_experience'] if candidate else '' }}</textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">B2B Experience</label>
+          <textarea name="b2b_experience" rows="2"
+                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['b2b_experience'] if candidate else '' }}</textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">D2D Experience</label>
+          <textarea name="d2d_experience" rows="2"
+                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['d2d_experience'] if candidate else '' }}</textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Gatekeeper Experience</label>
+          <textarea name="gatekeeper_experience" rows="2"
+                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['gatekeeper_experience'] if candidate else '' }}</textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Proof / Results</label>
+          <textarea name="proof_results" rows="2" placeholder="e.g. 40 appts/mo, $150k pipeline..."
+                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['proof_results'] if candidate else '' }}</textarea>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Notes</label>
+        <textarea name="notes" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ candidate['notes'] if candidate else '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        {{ 'Save Changes' if candidate else 'Add Candidate' }}
+      </button>
+      <a href="{{ '/candidates/' + str(candidate['id']) if candidate else '/candidates' }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+</div>
+{% end %}

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: maple-cold-caller
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 app.py --port=$PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DB_PATH
+        value: /data/maple_cold_caller.db
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

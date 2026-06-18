@@ -1,0 +1,188 @@
+{% extends "../base.html" %}
+{% block title %}Candidates — Maple{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Candidates</h1>
+{% end %}
+
+{% block header_actions %}
+<a href="/import/candidates" class="hidden sm:inline-flex bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  Import CSV
+</a>
+<a href="/candidates/new" class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + Add Candidate
+</a>
+{% end %}
+
+{% block content %}
+
+<!-- Filters -->
+<form method="GET" action="/candidates" class="flex flex-wrap gap-2 mb-4">
+  <input type="text" name="q" value="{{ search or '' }}" placeholder="Search name, role, source..."
+         class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500 w-48"/>
+  <select name="status" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+    <option value="">All Statuses</option>
+    {% for s in ['found', 'contacted', 'replied', 'qualified', 'interview', 'placed', 'rejected'] %}
+    <option value="{{ s }}" {% if status == s %}selected{% end %}>{{ s.capitalize() }}</option>
+    {% end %}
+  </select>
+  <button type="submit" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-3 py-1.5 rounded-lg transition-colors">Filter</button>
+  {% if search or status %}
+  <a href="/candidates" class="text-slate-400 hover:text-white text-sm px-3 py-1.5">Clear</a>
+  {% end %}
+</form>
+
+{% if candidates %}
+
+<!-- Bulk action bar -->
+<form method="POST" action="/candidates/bulk" id="bulkForm">
+  <div id="bulkBar" class="hidden mb-4 bg-slate-800 border border-indigo-500 rounded-xl p-3 flex items-center gap-3 flex-wrap">
+    <span class="text-sm text-indigo-300 font-medium" id="selCount">0 selected</span>
+    <select name="action" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-white">
+      <option value="">— Bulk Action —</option>
+      {% for s in ['contacted', 'replied', 'qualified', 'interview', 'placed', 'rejected'] %}
+      <option value="set_status_{{ s }}">Set Status: {{ s.capitalize() }}</option>
+      {% end %}
+      <option value="delete">Delete Selected</option>
+    </select>
+    <button type="submit" onclick="return confirmBulk()"
+            class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+      Apply
+    </button>
+    <button type="button" onclick="clearSelection()"
+            class="text-slate-400 hover:text-white text-sm px-2 py-1.5">Clear</button>
+  </div>
+  <input type="hidden" name="ids" id="selectedIds"/>
+
+<!-- Mobile cards -->
+<div class="lg:hidden space-y-3">
+  {% for c in candidates %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
+    <div class="flex items-start gap-3">
+      <input type="checkbox" class="candidate-cb mt-0.5 rounded border-slate-600 bg-slate-900 text-indigo-600" value="{{ c['id'] }}" onchange="updateBulk()"/>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <a href="/candidates/{{ c['id'] }}" class="font-medium text-white hover:text-indigo-400 truncate">{{ c['full_name'] }}</a>
+          <span class="badge
+            {% if c['status'] == 'placed' %}bg-green-900 text-green-300
+            {% elif c['status'] == 'rejected' %}bg-red-900 text-red-300
+            {% elif c['status'] == 'interview' %}bg-amber-900 text-amber-300
+            {% elif c['status'] == 'qualified' %}bg-violet-900 text-violet-300
+            {% elif c['status'] == 'replied' %}bg-indigo-900 text-indigo-300
+            {% elif c['status'] == 'contacted' %}bg-blue-900 text-blue-300
+            {% else %}bg-slate-700 text-slate-300{% end %} flex-shrink-0">{{ c['status'] }}</span>
+        </div>
+        <p class="text-xs text-slate-400">{{ c['current_role'] or '—' }}</p>
+        <div class="flex items-center gap-3 mt-2">
+          {% if c['global_score'] %}
+          <span class="text-xs font-semibold {% if c['global_score'] >= 75 %}text-green-400{% elif c['global_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">AI: {{ c['global_score'] }}</span>
+          {% end %}
+          <span class="text-xs text-slate-500">{{ c['platform_source'] or '—' }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% end %}
+</div>
+
+<!-- Desktop table -->
+<div class="hidden lg:block bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-700">
+        <th class="px-5 py-3 text-left">
+          <input type="checkbox" id="toggleAll" onchange="toggleAll(this)" class="rounded border-slate-600 bg-slate-900 text-indigo-600"/>
+        </th>
+        <th class="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Name</th>
+        <th class="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Current Role</th>
+        <th class="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Source</th>
+        <th class="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">AI Score</th>
+        <th class="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
+        <th class="px-5 py-3"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-700">
+      {% for c in candidates %}
+      <tr class="hover:bg-slate-700/40 transition-colors">
+        <td class="px-5 py-3">
+          <input type="checkbox" class="candidate-cb rounded border-slate-600 bg-slate-900 text-indigo-600" value="{{ c['id'] }}" onchange="updateBulk()"/>
+        </td>
+        <td class="px-5 py-3">
+          <a href="/candidates/{{ c['id'] }}" class="font-medium text-white hover:text-indigo-400">{{ c['full_name'] }}</a>
+        </td>
+        <td class="px-5 py-3 text-slate-400">{{ c['current_role'] or '—' }}</td>
+        <td class="px-5 py-3 text-slate-500 text-xs">{{ c['platform_source'] or '—' }}</td>
+        <td class="px-5 py-3">
+          {% if c['global_score'] %}
+          <span class="font-bold {% if c['global_score'] >= 75 %}text-green-400{% elif c['global_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">{{ c['global_score'] }}</span>
+          {% else %}
+          <span class="text-slate-600">—</span>
+          {% end %}
+        </td>
+        <td class="px-5 py-3">
+          <span class="badge
+            {% if c['status'] == 'placed' %}bg-green-900 text-green-300
+            {% elif c['status'] == 'rejected' %}bg-red-900 text-red-300
+            {% elif c['status'] == 'interview' %}bg-amber-900 text-amber-300
+            {% elif c['status'] == 'qualified' %}bg-violet-900 text-violet-300
+            {% elif c['status'] == 'replied' %}bg-indigo-900 text-indigo-300
+            {% elif c['status'] == 'contacted' %}bg-blue-900 text-blue-300
+            {% else %}bg-slate-700 text-slate-300{% end %}">{{ c['status'] }}</span>
+        </td>
+        <td class="px-5 py-3 text-right">
+          <a href="/candidates/{{ c['id'] }}" class="text-indigo-400 hover:text-indigo-300 text-xs mr-3">View</a>
+          <a href="/candidates/{{ c['id'] }}/edit" class="text-slate-400 hover:text-slate-300 text-xs">Edit</a>
+        </td>
+      </tr>
+      {% end %}
+    </tbody>
+  </table>
+</div>
+
+</form>
+
+{% else %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
+  <p class="text-slate-400 mb-4">{{ 'No candidates match your filters.' if (search or status) else 'No candidates yet.' }}</p>
+  <div class="flex justify-center gap-3">
+    {% if search or status %}
+    <a href="/candidates" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Clear filters</a>
+    {% end %}
+    <a href="/candidates/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Add candidate</a>
+    <a href="/import/candidates" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Import CSV</a>
+  </div>
+</div>
+{% end %}
+
+{% end %}
+
+{% block scripts %}
+<script>
+function updateBulk() {
+  const cbs = document.querySelectorAll('.candidate-cb:checked');
+  const ids = Array.from(cbs).map(c => c.value);
+  document.getElementById('selectedIds').value = ids.join(',');
+  document.getElementById('selCount').textContent = ids.length + ' selected';
+  document.getElementById('bulkBar').style.display = ids.length > 0 ? 'flex' : 'none';
+}
+function toggleAll(master) {
+  document.querySelectorAll('.candidate-cb').forEach(cb => {
+    cb.checked = master.checked;
+  });
+  updateBulk();
+}
+function clearSelection() {
+  document.querySelectorAll('.candidate-cb').forEach(cb => cb.checked = false);
+  const ta = document.getElementById('toggleAll');
+  if (ta) ta.checked = false;
+  updateBulk();
+}
+function confirmBulk() {
+  const action = document.querySelector('[name="action"]').value;
+  if (!action) { alert('Select a bulk action first.'); return false; }
+  const count = document.querySelectorAll('.candidate-cb:checked').length;
+  if (action === 'delete') return confirm(`Delete ${count} candidate(s)? This cannot be undone.`);
+  return true;
+}
+</script>
+{% end %}

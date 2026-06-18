@@ -1,0 +1,214 @@
+{% extends "../base.html" %}
+{% block title %}{{ candidate['full_name'] }} — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/candidates" class="text-slate-400 hover:text-white text-sm">Candidates</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white truncate">{{ candidate['full_name'] }}</h1>
+</div>
+{% end %}
+
+{% block header_actions %}
+<a href="/candidates/{{ candidate['id'] }}/edit" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">Edit</a>
+{% end %}
+
+{% block content %}
+
+<div x-data="{
+  status: '{{ candidate['status'] }}',
+  aiLoading: false,
+  aiError: '',
+  aiResult: null,
+  verdictBadge(v) {
+    const map = {'Strong Hire': 'bg-green-900 text-green-300', 'Good Fit': 'bg-blue-900 text-blue-300', 'Maybe': 'bg-amber-900 text-amber-300', 'Weak': 'bg-orange-900 text-orange-300', 'Pass': 'bg-red-900 text-red-300'};
+    return map[v] || 'bg-slate-700 text-slate-300';
+  },
+  async runAIScore() {
+    this.aiLoading = true; this.aiError = '';
+    const r = await fetch('/api/candidates/{{ candidate['id'] }}/ai-score', {method:'POST'});
+    const d = await r.json();
+    this.aiLoading = false;
+    if (d.ok) { this.aiResult = d; location.reload(); }
+    else this.aiError = d.error || 'AI scoring failed';
+  },
+  async setStatus(s) {
+    const r = await fetch('/api/candidates/{{ candidate['id'] }}/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:s})});
+    const d = await r.json();
+    if (d.ok) this.status = s;
+  }
+}">
+
+<!-- Header card -->
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-5">
+  <div class="flex flex-wrap items-start gap-4 mb-4">
+    <div class="w-12 h-12 rounded-full bg-indigo-700 flex items-center justify-center text-xl font-bold text-white flex-shrink-0">
+      {{ candidate['full_name'][0].upper() if candidate['full_name'] else '?' }}
+    </div>
+    <div class="flex-1">
+      <div class="flex flex-wrap items-center gap-2 mb-0.5">
+        <h2 class="text-xl font-bold text-white">{{ candidate['full_name'] }}</h2>
+        <span class="badge text-xs" :class="statusBadgeClass(status)" x-text="status"></span>
+      </div>
+      <p class="text-slate-400 text-sm">{{ candidate['current_role'] or 'No role listed' }} · {{ candidate['platform_source'] or 'Unknown source' }}</p>
+      {% if candidate['profile_url'] %}
+      <a href="{{ candidate['profile_url'] }}" target="_blank" class="text-xs text-indigo-400 hover:underline">View Profile →</a>
+      {% end %}
+    </div>
+    <!-- AI Score -->
+    <div class="text-center">
+      {% if candidate['ai_score'] %}
+      <p class="text-3xl font-bold {% if candidate['ai_score'] >= 75 %}text-green-400{% elif candidate['ai_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">{{ candidate['ai_score'] }}</p>
+      <p class="text-xs text-slate-500">AI Score</p>
+      {% if candidate['ai_verdict'] %}
+      <span class="badge mt-1" :class="verdictBadge('{{ candidate['ai_verdict'] }}')">{{ candidate['ai_verdict'] }}</span>
+      {% end %}
+      {% else %}
+      <p class="text-3xl font-bold text-slate-600">—</p>
+      <p class="text-xs text-slate-500">AI Score</p>
+      {% end %}
+    </div>
+  </div>
+
+  <!-- Status buttons -->
+  <div class="flex flex-wrap gap-2 mb-4">
+    {% for s in ['found', 'contacted', 'replied', 'qualified', 'interview', 'placed', 'rejected'] %}
+    <button @click="setStatus('{{ s }}')"
+            :class="status === '{{ s }}' ? 'ring-2 ring-indigo-400 opacity-100' : 'opacity-60 hover:opacity-90'"
+            class="badge {% if s == 'placed' %}bg-green-900 text-green-300{% elif s == 'rejected' %}bg-red-900 text-red-300{% elif s == 'interview' %}bg-amber-900 text-amber-300{% elif s == 'qualified' %}bg-violet-900 text-violet-300{% elif s == 'replied' %}bg-indigo-900 text-indigo-300{% elif s == 'contacted' %}bg-blue-900 text-blue-300{% else %}bg-slate-700 text-slate-300{% end %} cursor-pointer px-3 py-1.5">
+      {{ s.capitalize() }}
+    </button>
+    {% end %}
+  </div>
+
+  <!-- AI Score button -->
+  <div class="flex flex-wrap gap-3 items-center">
+    <button @click="runAIScore()" :disabled="aiLoading"
+            class="inline-flex items-center gap-2 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      <span x-show="aiLoading">⏳ Scoring...</span>
+      <span x-show="!aiLoading">🤖 {{ 'Re-score with AI' if candidate['ai_score'] else 'Score with AI' }}</span>
+    </button>
+    <a href="/matches/new?candidate_id={{ candidate['id'] }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      Add Match Score
+    </a>
+    <a href="/outreach/new?candidate_id={{ candidate['id'] }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      Add Outreach
+    </a>
+  </div>
+  <p x-show="aiError" x-text="aiError" class="mt-2 text-sm text-red-400"></p>
+
+  <!-- AI Summary -->
+  {% if candidate['ai_summary'] %}
+  <div class="mt-4 bg-violet-950/40 border border-violet-900/40 rounded-lg p-4">
+    <p class="text-xs font-semibold text-violet-400 uppercase tracking-wide mb-1">AI Assessment</p>
+    <p class="text-sm text-slate-300">{{ candidate['ai_summary'] }}</p>
+  </div>
+  {% end %}
+</div>
+
+<!-- 2-col detail -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+
+  <!-- AI Strengths / Weaknesses -->
+  {% if candidate['ai_strengths'] or candidate['ai_weaknesses'] %}
+  <div class="space-y-3">
+    {% if candidate['ai_strengths'] %}
+    <div class="bg-green-950/40 border border-green-900/40 rounded-xl p-4">
+      <p class="text-xs font-semibold text-green-400 uppercase tracking-wide mb-2">AI Strengths</p>
+      <p class="text-sm text-slate-300 whitespace-pre-line">{{ candidate['ai_strengths'] }}</p>
+    </div>
+    {% end %}
+    {% if candidate['ai_weaknesses'] %}
+    <div class="bg-red-950/40 border border-red-900/40 rounded-xl p-4">
+      <p class="text-xs font-semibold text-red-400 uppercase tracking-wide mb-2">AI Weaknesses</p>
+      <p class="text-sm text-slate-300 whitespace-pre-line">{{ candidate['ai_weaknesses'] }}</p>
+    </div>
+    {% end %}
+  </div>
+  {% end %}
+
+  <!-- Experience Grid -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
+    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-700 pb-2">Experience</p>
+    {% for label, key in [('Cold Calling', 'cold_calling_experience'), ('Appointment Setting', 'appointment_setting_experience'), ('B2B', 'b2b_experience'), ('D2D', 'd2d_experience'), ('Gatekeeper', 'gatekeeper_experience'), ('Past Roles', 'past_sales_roles'), ('Proof / Results', 'proof_results')] %}
+    {% if candidate[key] %}
+    <div>
+      <p class="text-xs text-slate-500">{{ label }}</p>
+      <p class="text-sm text-slate-300">{{ candidate[key] }}</p>
+    </div>
+    {% end %}
+    {% end %}
+    <div class="grid grid-cols-3 gap-2 pt-1">
+      {% for label, key in [('Language', 'language_level'), ('Availability', 'availability'), ('Comm-Only', 'commission_only_fit')] %}
+      <div class="bg-slate-900 rounded-lg p-2 text-center">
+        <p class="text-xs text-white font-medium">{% if key == 'commission_only_fit' %}{% if candidate[key] %}Yes{% else %}No{% end %}{% else %}{{ candidate[key] or '—' }}{% end %}</p>
+        <p class="text-xs text-slate-500">{{ label }}</p>
+      </div>
+      {% end %}
+    </div>
+  </div>
+
+</div>
+
+<!-- Match Scores -->
+{% if match_scores %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden mb-5">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+    <h3 class="font-semibold text-white text-sm">Match Scores</h3>
+    <a href="/matches/new?candidate_id={{ candidate['id'] }}" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add Match</a>
+  </div>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-700">
+        <th class="text-left px-5 py-2 text-xs text-slate-400">Campaign</th>
+        <th class="text-left px-5 py-2 text-xs text-slate-400">Score</th>
+        <th class="text-left px-5 py-2 text-xs text-slate-400">Verdict</th>
+        <th class="px-5 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-700">
+      {% for m in match_scores %}
+      <tr class="hover:bg-slate-700/40">
+        <td class="px-5 py-2 text-slate-300">{{ m['client_name'] or 'Unknown' }}</td>
+        <td class="px-5 py-2 font-bold {% if m['match_score'] and m['match_score'] >= 75 %}text-green-400{% elif m['match_score'] and m['match_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">{{ m['match_score'] if m['match_score'] is not None else '—' }}</td>
+        <td class="px-5 py-2 text-slate-400 text-xs">{{ m['recommended_next_action'] or '—' }}</td>
+        <td class="px-5 py-2 text-right"><a href="/matches/{{ m['id'] }}" class="text-xs text-indigo-400 hover:underline">View</a></td>
+      </tr>
+      {% end %}
+    </tbody>
+  </table>
+</div>
+{% end %}
+
+<!-- Outreach list -->
+{% if outreach %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+    <h3 class="font-semibold text-white text-sm">Outreach</h3>
+    <a href="/outreach/new?candidate_id={{ candidate['id'] }}" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add</a>
+  </div>
+  <div class="divide-y divide-slate-700">
+    {% for o in outreach %}
+    <div class="px-5 py-3 flex items-center gap-3">
+      <div class="flex-1 min-w-0">
+        <a href="/outreach/{{ o['id'] }}" class="text-sm font-medium text-white hover:text-indigo-400">{{ o['client_name'] or 'Unknown campaign' }}</a>
+        <p class="text-xs text-slate-400">Next: {{ o['next_follow_up_date'] or '—' }}</p>
+      </div>
+      <span class="badge {% if o['outreach_status'] == 'sent' %}bg-blue-900 text-blue-300{% elif o['outreach_status'] == 'replied' or o['outreach_status'] == 'booked' %}bg-green-900 text-green-300{% else %}bg-slate-700 text-slate-300{% end %}">{{ o['outreach_status'] }}</span>
+    </div>
+    {% end %}
+  </div>
+</div>
+{% end %}
+
+</div>
+{% end %}
+
+{% block scripts %}
+<script>
+function statusBadgeClass(status) {
+  const map = {found:'bg-slate-700 text-slate-300', contacted:'bg-blue-900 text-blue-300', replied:'bg-indigo-900 text-indigo-300', qualified:'bg-violet-900 text-violet-300', interview:'bg-amber-900 text-amber-300', placed:'bg-green-900 text-green-300', rejected:'bg-red-900 text-red-300'};
+  return map[status] || 'bg-slate-700 text-slate-300';
+}
+</script>
+{% end %}

@@ -1,0 +1,88 @@
+{% extends "../base.html" %}
+{% block title %}{{ 'Edit' if outreach else 'New' }} Outreach — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/outreach" class="text-slate-400 hover:text-white text-sm">Outreach</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">{{ 'Edit' if outreach else 'New' }} Outreach</h1>
+</div>
+{% end %}
+
+{% block content %}
+<div class="max-w-2xl">
+  <form method="POST" action="{{ '/outreach/' + str(outreach['id']) + '/edit' if outreach else '/outreach/new' }}" class="space-y-6">
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Outreach Info</h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Candidate *</label>
+          <select name="candidate_id" required class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— Select Candidate —</option>
+            {% for c in candidates %}
+            <option value="{{ c['id'] }}" {% if outreach and outreach['candidate_id'] == c['id'] %}selected{% end %}
+                    {% if preselect_candidate and preselect_candidate == c['id'] %}selected{% end %}>{{ c['full_name'] }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Campaign *</label>
+          <select name="campaign_id" required class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— Select Campaign —</option>
+            {% for c in campaigns %}
+            <option value="{{ c['id'] }}" {% if outreach and outreach['campaign_id'] == c['id'] %}selected{% end %}
+                    {% if preselect_campaign and preselect_campaign == c['id'] %}selected{% end %}>{{ c['client_name'] }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Platform</label>
+          <select name="platform" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['LinkedIn', 'Instagram', 'Facebook', 'Email', 'WhatsApp', 'Twitter/X', 'Other'] %}
+            <option value="{{ opt }}" {% if outreach and outreach['platform'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Outreach Step</label>
+          <select name="outreach_step" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['Connection Request', 'First DM', 'Follow-Up 1', 'Follow-Up 2', 'Qualification', 'Booking'] %}
+            <option value="{{ opt }}" {% if outreach and outreach['outreach_step'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Status</label>
+          <select name="status" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['pending', 'sent', 'replied', 'booked', 'no_reply', 'rejected'] %}
+            <option value="{{ opt }}" {% if outreach and outreach['outreach_status'] == opt %}selected{% end %}>{{ opt.replace('_', ' ').capitalize() }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Sent Date</label>
+          <input type="date" name="sent_date" value="{{ outreach['sent_date'] if outreach else '' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Notes</label>
+        <textarea name="notes" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ outreach['notes'] if outreach else '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        {{ 'Save Changes' if outreach else 'Add Outreach' }}
+      </button>
+      <a href="{{ '/outreach/' + str(outreach['id']) if outreach else '/outreach' }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        Cancel
+      </a>
+    </div>
+  </form>
+</div>
+{% end %}

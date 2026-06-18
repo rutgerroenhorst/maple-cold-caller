@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Maple — Cold Caller Match Engine{% end %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak]{display:none!important}
+    .sidebar-link{@apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 text-sm font-medium transition-all duration-150 hover:bg-slate-800 hover:text-white;}
+    .sidebar-link.active{@apply bg-indigo-600 text-white shadow-lg;}
+    .badge{@apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold;}
+    textarea{resize:vertical;}
+    .copy-btn{transition:all .15s;}
+    .copy-btn.copied{@apply bg-green-500 text-white;}
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen" x-data="{ sidebarOpen: false }">
+
+<!-- Mobile overlay -->
+<div x-show="sidebarOpen" x-cloak @click="sidebarOpen=false"
+     class="fixed inset-0 z-20 bg-black/60 lg:hidden"></div>
+
+<!-- Sidebar -->
+<aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+       class="fixed inset-y-0 left-0 z-30 w-64 bg-slate-900 border-r border-slate-800 flex flex-col
+              transform transition-transform duration-200 lg:translate-x-0 lg:static lg:inset-0">
+
+  <!-- Logo -->
+  <div class="h-16 flex items-center px-5 border-b border-slate-800 flex-shrink-0">
+    <span class="text-xl font-bold text-white tracking-tight">🍁 Maple</span>
+    <span class="ml-2 text-xs bg-indigo-600 text-white px-2 py-0.5 rounded-full font-medium">Cold Caller</span>
+  </div>
+
+  <!-- Nav -->
+  <nav class="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+    <p class="text-xs text-slate-500 uppercase tracking-widest font-semibold px-3 mb-2">Modules</p>
+
+    <a href="/dashboard"
+       class="sidebar-link {% if page == 'dashboard' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+      </svg>
+      Dashboard
+    </a>
+
+    <a href="/campaigns"
+       class="sidebar-link {% if page == 'campaigns' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+      </svg>
+      Client Campaigns
+    </a>
+
+    <a href="/profiles"
+       class="sidebar-link {% if page == 'profiles' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+      </svg>
+      Ideal Caller Profiles
+    </a>
+
+    <a href="/candidates"
+       class="sidebar-link {% if page == 'candidates' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+      Candidates
+    </a>
+
+    <a href="/matches"
+       class="sidebar-link {% if page == 'matches' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+      Match Scores
+    </a>
+
+    <a href="/outreach"
+       class="sidebar-link {% if page == 'outreach' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+      </svg>
+      Outreach Queue
+    </a>
+
+    <a href="/interviews"
+       class="sidebar-link {% if page == 'interviews' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+      </svg>
+      Interview Queue
+    </a>
+
+    <div class="my-3 border-t border-slate-800"></div>
+    <p class="text-xs text-slate-500 uppercase tracking-widest font-semibold px-3 mb-2">Tools</p>
+
+    <a href="/daily"
+       class="sidebar-link {% if page == 'daily' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13 10V3L4 14h7v7l9-11h-7z"/>
+      </svg>
+      Daily Dashboard
+    </a>
+
+    <a href="/import/candidates"
+       class="sidebar-link {% if page == 'import' %}active{% end %}">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+      </svg>
+      Import Candidates
+    </a>
+  </nav>
+
+  <div class="px-4 py-3 border-t border-slate-800 text-xs text-slate-500">
+    Maple AI Workforce OS v2.0
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="lg:ml-64 flex flex-col min-h-screen">
+  <!-- Top bar -->
+  <header class="h-16 bg-slate-900 border-b border-slate-800 flex items-center px-4 gap-4 sticky top-0 z-10">
+    <!-- Hamburger (mobile) -->
+    <button @click="sidebarOpen=!sidebarOpen" class="lg:hidden text-slate-400 hover:text-white p-1">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </button>
+    <div class="flex-1">
+      {% block header %}{% end %}
+    </div>
+    <div class="flex items-center gap-2">
+      {% block header_actions %}{% end %}
+    </div>
+  </header>
+
+  <!-- Page content -->
+  <main class="flex-1 p-4 md:p-6 max-w-screen-2xl w-full mx-auto">
+    {% block content %}{% end %}
+  </main>
+</div>
+
+<script>
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+async function setStatus(url, status, callback) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status})
+  });
+  const data = await r.json();
+  if (data.ok && callback) callback(status);
+}
+
+function statusBadgeClass(status) {
+  const map = {
+    found:     'bg-slate-700 text-slate-300',
+    contacted: 'bg-blue-900 text-blue-300',
+    replied:   'bg-indigo-900 text-indigo-300',
+    qualified: 'bg-violet-900 text-violet-300',
+    interview: 'bg-amber-900 text-amber-300',
+    placed:    'bg-green-900 text-green-300',
+    rejected:  'bg-red-900 text-red-300',
+    active:    'bg-green-900 text-green-300',
+    paused:    'bg-amber-900 text-amber-300',
+    closed:    'bg-slate-700 text-slate-400',
+    pending:   'bg-slate-700 text-slate-300',
+    sent:      'bg-blue-900 text-blue-300',
+    scheduled: 'bg-indigo-900 text-indigo-300',
+    completed: 'bg-green-900 text-green-300',
+    cancelled: 'bg-red-900 text-red-300',
+    no_show:   'bg-orange-900 text-orange-300',
+  };
+  return map[status] || 'bg-slate-700 text-slate-300';
+}
+</script>
+{% block scripts %}{% end %}
+</body>
+</html>

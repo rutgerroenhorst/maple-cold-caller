@@ -1,0 +1,138 @@
+{% extends "../base.html" %}
+{% block title %}Outreach — {{ outreach['candidate_name'] or 'Unknown' }} — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/outreach" class="text-slate-400 hover:text-white text-sm">Outreach</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white truncate">{{ outreach['candidate_name'] or 'Unknown' }}</h1>
+</div>
+{% end %}
+
+{% block header_actions %}
+<a href="/outreach/{{ outreach['id'] }}/edit" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">Edit</a>
+{% end %}
+
+{% block content %}
+<div x-data="{
+  status: '{{ outreach['outreach_status'] }}',
+  aiLoading: false,
+  aiError: '',
+  async runAIGenerate() {
+    this.aiLoading = true; this.aiError = '';
+    const r = await fetch('/api/outreach/{{ outreach['id'] }}/generate', {method:'POST'});
+    const d = await r.json();
+    this.aiLoading = false;
+    if (d.ok) location.reload();
+    else this.aiError = d.error || 'AI generation failed';
+  },
+  async setStatus(s) {
+    const r = await fetch('/api/outreach/{{ outreach['id'] }}/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:s})});
+    const d = await r.json();
+    if (d.ok) this.status = s;
+  }
+}" class="max-w-3xl space-y-5">
+
+  <!-- Header card -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <div class="flex flex-wrap items-start gap-4 mb-4">
+      <div class="flex-1">
+        <div class="flex flex-wrap gap-2 items-center mb-1">
+          <a href="/candidates/{{ outreach['candidate_id'] }}" class="text-lg font-bold text-white hover:text-indigo-400">{{ outreach['candidate_name'] or 'Unknown' }}</a>
+          <span class="text-slate-500">→</span>
+          <a href="/campaigns/{{ outreach['campaign_id'] }}" class="text-lg font-bold text-white hover:text-indigo-400">{{ outreach['client_name'] or 'Unknown' }}</a>
+        </div>
+        <p class="text-sm text-slate-400">{{ outreach['last_message_sent_at'] or 'No messages sent yet' }}</p>
+        {% if outreach['last_message_sent_at'] %}
+        <p class="text-xs text-slate-500 mt-0.5">Last sent: {{ outreach['last_message_sent_at'] }}</p>
+        {% end %}
+      </div>
+      <span class="badge text-sm px-3 py-1" :class="statusBadgeClass(status)" x-text="status"></span>
+    </div>
+
+    <!-- Status buttons -->
+    <div class="flex flex-wrap gap-2 mb-4">
+      {% for s in ['pending', 'sent', 'replied', 'booked', 'no_reply', 'rejected'] %}
+      <button @click="setStatus('{{ s }}')"
+              :class="status === '{{ s }}' ? 'ring-2 ring-indigo-400 opacity-100' : 'opacity-60 hover:opacity-90'"
+              class="badge {% if s == 'sent' %}bg-blue-900 text-blue-300{% elif s == 'replied' or s == 'booked' %}bg-green-900 text-green-300{% elif s == 'rejected' or s == 'no_reply' %}bg-red-900 text-red-300{% else %}bg-slate-700 text-slate-300{% end %} cursor-pointer px-3 py-1.5">
+        {{ s.replace('_', ' ').capitalize() }}
+      </button>
+      {% end %}
+    </div>
+
+    <!-- AI Generate button -->
+    <div class="flex flex-wrap gap-3 items-center">
+      <button @click="runAIGenerate()" :disabled="aiLoading"
+              class="inline-flex items-center gap-2 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+        <span x-show="aiLoading">⏳ Generating...</span>
+        <span x-show="!aiLoading">🤖 {{ 'Regenerate Messages' if outreach['connection_request'] else 'Generate AI Messages' }}</span>
+      </button>
+    </div>
+    <p x-show="aiError" x-text="aiError" class="mt-2 text-sm text-red-400"></p>
+  </div>
+
+  <!-- Message cards -->
+  {% set messages = [
+    ('Connection Request', 'connection_request'),
+    ('First DM', 'first_dm'),
+    ('Follow-Up 1', 'follow_up_1'),
+    ('Follow-Up 2', 'follow_up_2'),
+    ('Qualification Questions', 'qualification_questions'),
+    ('Booking Message', 'booking_message'),
+  ] %}
+
+  {% set has_messages = False %}
+  {% for label, key in messages %}
+    {% if outreach[key] %}
+      {% set has_messages = True %}
+    {% end %}
+  {% end %}
+
+  {% if has_messages %}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    {% for label, key in messages %}
+    {% if outreach[key] %}
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">{{ label }}</p>
+        <button class="copy-btn text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition-colors"
+                onclick="copyText(this.closest('.copy-wrap').querySelector('.msg-text').textContent.trim(), this)">
+          Copy
+        </button>
+      </div>
+      <div class="copy-wrap">
+        <p class="msg-text text-sm text-slate-300 whitespace-pre-line">{{ outreach[key] }}</p>
+      </div>
+    </div>
+    {% end %}
+    {% end %}
+  </div>
+  {% else %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-8 text-center">
+    <p class="text-slate-400 mb-3">No messages generated yet.</p>
+    <button @click="runAIGenerate()" :disabled="aiLoading"
+            class="bg-violet-700 hover:bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      🤖 Generate AI Messages
+    </button>
+  </div>
+  {% end %}
+
+  {% if outreach['notes'] %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
+    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Notes</p>
+    <p class="text-sm text-slate-400">{{ outreach['notes'] }}</p>
+  </div>
+  {% end %}
+
+</div>
+{% end %}
+
+{% block scripts %}
+<script>
+function statusBadgeClass(status) {
+  const map = {pending:'bg-slate-700 text-slate-300', sent:'bg-blue-900 text-blue-300', replied:'bg-green-900 text-green-300', booked:'bg-green-900 text-green-300', no_reply:'bg-red-900 text-red-300', rejected:'bg-red-900 text-red-300'};
+  return map[status] || 'bg-slate-700 text-slate-300';
+}
+</script>
+{% end %}

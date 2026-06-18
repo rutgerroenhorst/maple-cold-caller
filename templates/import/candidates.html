@@ -1,0 +1,141 @@
+{% extends "../base.html" %}
+{% block title %}Import Candidates — Maple{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Import Candidates from CSV</h1>
+{% end %}
+
+{% block content %}
+
+{% if result %}
+<div class="mb-5 bg-{% if result['errors'] %}amber{% else %}green{% end %}-950/40 border border-{% if result['errors'] %}amber{% else %}green{% end %}-900/40 rounded-xl p-5">
+  <div class="flex items-start gap-3">
+    <span class="text-xl">{% if result['errors'] %}⚠️{% else %}✅{% end %}</span>
+    <div>
+      <p class="font-semibold text-white mb-1">
+        Imported {{ result['imported'] }} candidate{{ 's' if result['imported'] != 1 else '' }} successfully.
+        {% if result['skipped'] %} Skipped {{ result['skipped'] }} rows.{% end %}
+      </p>
+      {% if result['errors'] %}
+      <ul class="text-sm text-amber-300 space-y-0.5 mt-2">
+        {% for e in result['errors'][:10] %}
+        <li>{{ e }}</li>
+        {% end %}
+        {% if result['errors']|length > 10 %}
+        <li>…and {{ result['errors']|length - 10 }} more errors</li>
+        {% end %}
+      </ul>
+      {% end %}
+    </div>
+  </div>
+</div>
+{% end %}
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Upload form -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <h2 class="font-semibold text-white text-sm mb-4">Upload CSV File</h2>
+    <form method="POST" action="/import/candidates" enctype="multipart/form-data" class="space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-2">CSV File *</label>
+        <input type="file" name="csv_file" accept=".csv" required
+               class="w-full text-sm text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 file:cursor-pointer"/>
+      </div>
+      <div class="flex items-center gap-3">
+        <input type="checkbox" name="skip_duplicates" id="skip_dup" value="1" checked
+               class="rounded border-slate-600 bg-slate-900 text-indigo-600"/>
+        <label for="skip_dup" class="text-sm text-slate-300">Skip duplicate names</label>
+      </div>
+      <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors">
+        📤 Import Candidates
+      </button>
+    </form>
+  </div>
+
+  <!-- Column reference -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <h2 class="font-semibold text-white text-sm mb-4">CSV Column Reference</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-slate-700">
+            <th class="text-left py-1.5 pr-3 text-slate-400 font-semibold">Column</th>
+            <th class="text-left py-1.5 text-slate-400 font-semibold">Notes</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700/50">
+          {% for col, note in [
+            ('full_name', 'Required — candidate full name'),
+            ('current_role', 'Optional — current job title'),
+            ('platform_source', 'e.g. LinkedIn, Upwork'),
+            ('profile_url', 'Profile link'),
+            ('email', 'Email address'),
+            ('phone', 'Phone number'),
+            ('cold_calling_experience', 'Free text'),
+            ('appointment_setting_experience', 'Free text'),
+            ('b2b_experience', 'Free text'),
+            ('d2d_experience', 'Free text'),
+            ('gatekeeper_experience', 'Free text'),
+            ('past_sales_roles', 'Free text'),
+            ('proof_results', 'e.g. 40 appts/month'),
+            ('language_level', 'Native / Fluent / etc.'),
+            ('availability', 'Full-Time / Part-Time / etc.'),
+            ('commission_only_fit', '1 or true = yes'),
+            ('status', 'found / contacted / etc.'),
+            ('notes', 'Any additional notes'),
+          ] %}
+          <tr>
+            <td class="py-1.5 pr-3 font-mono text-indigo-300">{{ col }}</td>
+            <td class="py-1.5 text-slate-400">{{ note }}</td>
+          </tr>
+          {% end %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- Sample CSV -->
+<div class="mt-6 bg-slate-800 border border-slate-700 rounded-xl p-5">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="font-semibold text-white text-sm">Sample CSV</h2>
+    <button class="copy-btn text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition-colors"
+            onclick="copyText(document.getElementById('sampleCsv').textContent.trim(), this)">Copy</button>
+  </div>
+  <pre id="sampleCsv" class="text-xs text-slate-400 overflow-x-auto whitespace-pre bg-slate-900 rounded-lg p-4">full_name,current_role,platform_source,cold_calling_experience,appointment_setting_experience,b2b_experience,language_level,availability,commission_only_fit,status,notes
+John Smith,SDR,LinkedIn,"2 years outbound B2B SaaS","30 appts/month average","Yes - SaaS and agencies",Native,Full-Time,1,found,"Strong prospect"
+Maria Garcia,Sales Rep,Upwork,"1 year cold calling insurance","15-20 appts/week","Some B2B",Fluent,Part-Time,1,found,""
+</pre>
+</div>
+
+{% if preview_rows %}
+<div class="mt-6 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  <div class="px-5 py-4 border-b border-slate-700">
+    <h2 class="font-semibold text-white text-sm">Preview (first {{ preview_rows|length }} rows)</h2>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="border-b border-slate-700">
+          {% for col in preview_headers %}
+          <th class="text-left px-3 py-2 text-slate-400 font-semibold whitespace-nowrap">{{ col }}</th>
+          {% end %}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-700">
+        {% for row in preview_rows %}
+        <tr class="hover:bg-slate-700/40">
+          {% for val in row %}
+          <td class="px-3 py-2 text-slate-300 max-w-xs truncate">{{ val }}</td>
+          {% end %}
+        </tr>
+        {% end %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% end %}
+
+{% end %}

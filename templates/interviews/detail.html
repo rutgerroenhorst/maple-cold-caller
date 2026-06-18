@@ -1,0 +1,109 @@
+{% extends "../base.html" %}
+{% block title %}Interview — {{ interview['candidate_name'] or 'Unknown' }} — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/interviews" class="text-slate-400 hover:text-white text-sm">Interviews</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white truncate">{{ interview['candidate_name'] or 'Unknown' }}</h1>
+</div>
+{% end %}
+
+{% block header_actions %}
+<a href="/interviews/{{ interview['id'] }}/edit" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">Edit</a>
+{% end %}
+
+{% block content %}
+<div x-data="{
+  status: '{{ interview['status'] }}',
+  async setStatus(s) {
+    const r = await fetch('/api/interviews/{{ interview['id'] }}/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:s})});
+    const d = await r.json();
+    if (d.ok) this.status = s;
+  }
+}" class="max-w-2xl space-y-5">
+
+  <!-- Header card -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <div class="flex flex-wrap items-start gap-4 mb-4">
+      <div class="flex-1">
+        <div class="flex flex-wrap gap-2 items-center mb-1">
+          <a href="/candidates/{{ interview['candidate_id'] }}" class="text-xl font-bold text-white hover:text-indigo-400">{{ interview['candidate_name'] or 'Unknown' }}</a>
+          <span class="badge text-sm px-3 py-1" :class="statusBadgeClass(status)" x-text="status"></span>
+        </div>
+        {% if interview['campaign_id'] %}
+        <p class="text-sm text-slate-400">Campaign: <a href="/campaigns/{{ interview['campaign_id'] }}" class="text-indigo-400 hover:underline">{{ interview['client_name'] or 'Unknown' }}</a></p>
+        {% end %}
+      </div>
+    </div>
+
+    <!-- Details grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div class="bg-slate-900 rounded-lg p-3 text-center">
+        <p class="text-sm font-medium text-white">{{ interview['interview_date'] or '—' }}</p>
+        <p class="text-xs text-slate-500">Date</p>
+      </div>
+      <div class="bg-slate-900 rounded-lg p-3 text-center">
+        <p class="text-sm font-medium text-white">{{ interview['interview_time'] or '—' }}</p>
+        <p class="text-xs text-slate-500">Time</p>
+      </div>
+      <div class="bg-slate-900 rounded-lg p-3 text-center">
+        <p class="text-sm font-medium text-white">{{ interview['interview_format'] or '—' }}</p>
+        <p class="text-xs text-slate-500">Format</p>
+      </div>
+      <div class="bg-slate-900 rounded-lg p-3 text-center">
+        <p class="text-sm font-medium text-white">{{ interview['interviewer'] or '—' }}</p>
+        <p class="text-xs text-slate-500">Interviewer</p>
+      </div>
+    </div>
+
+    {% if interview['meeting_link'] %}
+    <div class="mb-4">
+      <a href="{{ interview['meeting_link'] }}" target="_blank"
+         class="inline-flex items-center gap-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+        🔗 Join Meeting
+      </a>
+    </div>
+    {% end %}
+
+    <!-- Status buttons -->
+    <div class="flex flex-wrap gap-2">
+      {% for s in ['scheduled', 'completed', 'no_show', 'cancelled', 'rescheduled'] %}
+      <button @click="setStatus('{{ s }}')"
+              :class="status === '{{ s }}' ? 'ring-2 ring-indigo-400 opacity-100' : 'opacity-60 hover:opacity-90'"
+              class="badge
+                {% if s == 'completed' %}bg-green-900 text-green-300
+                {% elif s in ('no_show', 'cancelled') %}bg-red-900 text-red-300
+                {% elif s == 'rescheduled' %}bg-amber-900 text-amber-300
+                {% else %}bg-indigo-900 text-indigo-300{% end %} cursor-pointer px-3 py-1.5">
+        {{ s.replace('_', ' ').capitalize() }}
+      </button>
+      {% end %}
+    </div>
+  </div>
+
+  {% if interview['notes'] %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Notes</p>
+    <p class="text-sm text-slate-300 whitespace-pre-line">{{ interview['notes'] }}</p>
+  </div>
+  {% end %}
+
+  {% if interview['interview_result'] %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Interview Result / Feedback</p>
+    <p class="text-sm text-slate-300 whitespace-pre-line">{{ interview['interview_result'] }}</p>
+  </div>
+  {% end %}
+
+</div>
+{% end %}
+
+{% block scripts %}
+<script>
+function statusBadgeClass(status) {
+  const map = {scheduled:'bg-indigo-900 text-indigo-300', completed:'bg-green-900 text-green-300', no_show:'bg-red-900 text-red-300', cancelled:'bg-slate-700 text-slate-400', rescheduled:'bg-amber-900 text-amber-300'};
+  return map[status] || 'bg-slate-700 text-slate-300';
+}
+</script>
+{% end %}

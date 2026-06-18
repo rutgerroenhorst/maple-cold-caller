@@ -1,0 +1,153 @@
+{% extends "../base.html" %}
+{% block title %}{{ 'Edit' if campaign else 'New' }} Campaign — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/campaigns" class="text-slate-400 hover:text-white text-sm">Campaigns</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">{{ 'Edit' if campaign else 'New' }} Campaign</h1>
+</div>
+{% end %}
+
+{% block content %}
+<div class="max-w-3xl">
+  <form method="POST" action="{{ '/campaigns/' + str(campaign['id']) + '/edit' if campaign else '/campaigns/new' }}" class="space-y-6">
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Basic Info</h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Client Name *</label>
+          <input type="text" name="client_name" value="{{ campaign['client_name'] if campaign else '' }}"
+                 required class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Niche / Industry</label>
+          <input type="text" name="niche" value="{{ campaign['niche'] if campaign else '' }}"
+                 placeholder="e.g. SaaS, Real Estate, Insurance"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Offer Description</label>
+        <textarea name="offer_description" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ campaign['offer_description'] if campaign else '' }}</textarea>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Target Market</label>
+          <input type="text" name="target_market" value="{{ campaign['target_market'] if campaign else '' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">B2B or B2C</label>
+          <select name="b2b_or_b2c" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['B2B', 'B2C', 'Both'] %}
+            <option value="{{ opt }}" {% if campaign and campaign['b2b_or_b2c'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Language Required</label>
+          <input type="text" name="language_required" value="{{ campaign['language_required'] if campaign else 'English' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Country / Timezone</label>
+          <input type="text" name="country_timezone" value="{{ campaign['country_timezone'] if campaign else '' }}"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Compensation</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Pay Structure</label>
+          <select name="pay_structure" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['Commission Only', 'Base + Commission', 'Hourly', 'Per Appointment'] %}
+            <option value="{{ opt }}" {% if campaign and campaign['pay_structure'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Appointment Payout</label>
+          <input type="text" name="appointment_payout" value="{{ campaign['appointment_payout'] if campaign else '' }}"
+                 placeholder="e.g. $25/appt"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Closed Deal Bonus</label>
+          <input type="text" name="closed_deal_bonus" value="{{ campaign['closed_deal_bonus'] if campaign else '' }}"
+                 placeholder="e.g. $200/close"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Caller Requirements</h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Gatekeeper Difficulty</label>
+          <select name="gatekeeper_difficulty" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['Low', 'Medium', 'High'] %}
+            <option value="{{ opt }}" {% if campaign and campaign['gatekeeper_difficulty'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Status</label>
+          <select name="status" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            {% for opt in ['active', 'paused', 'closed'] %}
+            <option value="{{ opt }}" {% if campaign and campaign['status'] == opt %}selected{% end %}>{{ opt }}</option>
+            {% end %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Required Experience</label>
+        <textarea name="required_experience" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ campaign['required_experience'] if campaign else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Preferred Traits</label>
+        <textarea name="preferred_traits" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ campaign['preferred_traits'] if campaign else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Disqualifiers</label>
+        <textarea name="disqualifiers" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ campaign['disqualifiers'] if campaign else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Notes</label>
+        <textarea name="notes" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ campaign['notes'] if campaign else '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        {{ 'Save Changes' if campaign else 'Create Campaign' }}
+      </button>
+      <a href="{{ '/campaigns/' + str(campaign['id']) if campaign else '/campaigns' }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+</div>
+{% end %}

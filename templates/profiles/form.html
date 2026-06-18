@@ -1,0 +1,104 @@
+{% extends "../base.html" %}
+{% block title %}{{ 'Edit' if profile else 'New' }} Profile — Maple{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/profiles" class="text-slate-400 hover:text-white text-sm">Profiles</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">{{ 'Edit' if profile else 'New' }} Ideal Caller Profile</h1>
+</div>
+{% end %}
+
+{% block content %}
+<div class="max-w-2xl">
+  <form method="POST" action="{{ '/profiles/' + str(profile['id']) + '/edit' if profile else '/profiles/new' }}" class="space-y-6">
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Profile Info</h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Profile Name *</label>
+          <input type="text" name="profile_name" value="{{ profile['profile_name'] if profile else '' }}"
+                 required placeholder="e.g. B2B SaaS Cold Caller"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Campaign</label>
+          <select name="campaign_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— None —</option>
+            {% for c in campaigns %}
+            <option value="{{ c['id'] }}" {% if profile and profile['campaign_id'] == c['id'] %}selected{% end %}>{{ c['client_name'] }}</option>
+            {% end %}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Caller Requirements</h2>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Must-Have Skills</label>
+        <textarea name="must_have_skills" rows="3" placeholder="e.g. 1+ year cold calling, B2B experience, gatekeeper handling..."
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ profile['must_have_skills'] if profile else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Nice-to-Have Skills</label>
+        <textarea name="nice_to_have_skills" rows="3" placeholder="e.g. CRM experience, appointment setting track record..."
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ profile['nice_to_have_skills'] if profile else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Red Flags / Disqualifiers</label>
+        <textarea name="red_flags" rows="2" placeholder="e.g. Only inbound experience, no cold calling, customer service only..."
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-red-500 border-red-900/50">{{ profile['red_flags'] if profile else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Outreach Angle</label>
+        <textarea name="outreach_angle" rows="2" placeholder="e.g. Lead with earning potential and flexible remote hours..."
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ profile['outreach_angle'] if profile else '' }}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Min Cold Calling Years</label>
+        <input type="number" name="min_cold_calling_years" value="{{ profile['min_cold_calling_years'] if profile else '' }}"
+               min="0" max="20" placeholder="0"
+               class="w-32 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <input type="checkbox" name="b2b_required" id="b2b_required" value="1"
+               {% if profile and profile['b2b_required'] %}checked{% end %}
+               class="rounded border-slate-600 bg-slate-900 text-indigo-600"/>
+        <label for="b2b_required" class="text-sm text-slate-300">B2B experience required</label>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <input type="checkbox" name="appointment_setting_required" id="appt_req" value="1"
+               {% if profile and profile['appointment_setting_required'] %}checked{% end %}
+               class="rounded border-slate-600 bg-slate-900 text-indigo-600"/>
+        <label for="appt_req" class="text-sm text-slate-300">Appointment setting experience required</label>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Notes</label>
+        <textarea name="notes" rows="2"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">{{ profile['notes'] if profile else '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        {{ 'Save Changes' if profile else 'Create Profile' }}
+      </button>
+      <a href="{{ '/profiles/' + str(profile['id']) if profile else '/profiles' }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+</div>
+{% end %}
