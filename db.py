@@ -758,6 +758,7 @@ def get_daily_stats() -> dict:
     d['scheduled_interviews'] = conn.execute(
         "SELECT COUNT(*) FROM interview_queue WHERE status='scheduled'").fetchone()[0]
     conn.close()
+    return d
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -959,6 +960,7 @@ def init_agents_tables():
         exact_fix       TEXT,
         status          TEXT DEFAULT 'open',
         related_tasks   TEXT,
+        resolved_at     TEXT,
         created_at      TEXT DEFAULT (datetime('now'))
     );
     """)

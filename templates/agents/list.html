@@ -54,7 +54,7 @@
   <!-- Latest output -->
   {% if agent['latest_output'] %}
   <div class="bg-slate-900/60 rounded-lg p-3 text-xs text-slate-300 max-h-20 overflow-hidden">
-    {{ agent['latest_output'][:200] }}{% if agent['latest_output']|length > 200 %}…{% end %}
+    {{ agent['latest_output'][:200] }}{% if len(agent['latest_output']) > 200 %}…{% end %}
   </div>
   {% end %}
 
