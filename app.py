@@ -79,6 +79,12 @@ class CampaignNewHandler(Base):
     def get(self):
         self.render("campaigns/form.html", campaign=None, page='campaigns')
 
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        cid = db.create_campaign(data)
+        self.redirect(f'/campaigns/{cid}')
+
 
 class CampaignDetailHandler(Base):
     def get(self, cid):
@@ -142,6 +148,12 @@ class ProfileNewHandler(Base):
         self.render("profiles/form.html", profile=None, campaigns=campaigns,
                     preselect_campaign=campaign_id, page='profiles')
 
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        pid = db.create_profile(data)
+        self.redirect(f'/profiles/{pid}')
+
 
 class ProfileDetailHandler(Base):
     def get(self, pid):
@@ -196,6 +208,12 @@ class CandidateListHandler(Base):
 class CandidateNewHandler(Base):
     def get(self):
         self.render("candidates/form.html", candidate=None, page='candidates')
+
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        cid = db.create_candidate(data)
+        self.redirect(f'/candidates/{cid}')
 
 
 class CandidateDetailHandler(Base):
@@ -277,6 +295,12 @@ class MatchScoreNewHandler(Base):
                     preselect_candidate=preselect_candidate,
                     preselect_campaign=preselect_campaign, page='matches')
 
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        mid = db.create_match_score(data)
+        self.redirect(f'/matches/{mid}')
+
 
 class MatchScoreDetailHandler(Base):
     def get(self, mid):
@@ -340,6 +364,12 @@ class OutreachNewHandler(Base):
         self.render("outreach/form.html", outreach=None, campaigns=campaigns,
                     candidates=candidates, preselect_candidate=preselect_candidate,
                     preselect_campaign=preselect_campaign, page='outreach')
+
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        oid = db.create_outreach(data)
+        self.redirect(f'/outreach/{oid}')
 
 
 class OutreachDetailHandler(Base):
@@ -416,6 +446,12 @@ class InterviewNewHandler(Base):
         self.render("interviews/form.html", interview=None, campaigns=campaigns,
                     candidates=candidates, preselect_candidate=preselect_candidate,
                     preselect_campaign=preselect_campaign, page='interviews')
+
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        iid = db.create_interview(data)
+        self.redirect(f'/interviews/{iid}')
 
 
 class InterviewDetailHandler(Base):
