@@ -45,7 +45,7 @@
           <select name="profile_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
             <option value="">— None —</option>
             {% for p in profiles %}
-            <option value="{{ p['id'] }}" {% if match and match['profile_id'] == p['id'] %}selected{% end %}>{{ p['profile_name'] }}</option>
+            <option value="{{ p['id'] }}" {% if match and match.get('profile_id') == p['id'] %}selected{% end %}>{{ p.get('client_name') or p.get('profile_summary', '')[:40] or 'Profile ' + str(p['id']) }}</option>
             {% end %}
           </select>
         </div>
@@ -65,12 +65,12 @@
       <div>
         <label class="block text-xs font-medium text-slate-400 mb-1">Match Score (0–100)</label>
         <input type="range" name="match_score" min="0" max="100"
-               value="{{ match['match_score'] if match and match['match_score'] is not none else 50 }}"
+               value="{{ match['match_score'] if match and match['match_score'] is not None else 50 }}"
                oninput="document.getElementById('scoreVal').textContent = this.value"
                class="w-full accent-indigo-500"/>
         <div class="flex justify-between text-xs text-slate-500 mt-0.5">
           <span>0</span>
-          <span class="font-bold text-white" id="scoreVal">{{ match['match_score'] if match and match['match_score'] is not none else 50 }}</span>
+          <span class="font-bold text-white" id="scoreVal">{{ match['match_score'] if match and match['match_score'] is not None else 50 }}</span>
           <span>100</span>
         </div>
       </div>

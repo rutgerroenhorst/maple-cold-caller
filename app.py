@@ -9,6 +9,7 @@ import os
 import json
 import csv
 import io
+import hashlib
 import db
 import ai
 
@@ -21,7 +22,23 @@ TMPL = os.path.join(os.path.dirname(__file__), "templates")
 # Base Handler
 # ──────────────────────────────────────────────────────────────────────────────
 
+_APP_PASSWORD = os.environ.get("MAPLE_APP_PASSWORD", "")
+
+
 class Base(tornado.web.RequestHandler):
+    def get_current_user(self):
+        if not _APP_PASSWORD:
+            return "open"  # no password set → open access
+        return self.get_secure_cookie("maple_user")
+
+    def prepare(self):
+        if not _APP_PASSWORD:
+            return  # auth disabled
+        if not self.get_current_user():
+            if self.request.path not in ("/login",):
+                self.redirect("/login")
+                return
+
     def get_arg(self, name, default='', type=None):
         val = self.get_argument(name, None)
         if val is None:
@@ -44,6 +61,29 @@ class Base(tornado.web.RequestHandler):
             return json.loads(self.request.body)
         except Exception:
             return {}
+
+
+class LoginHandler(tornado.web.RequestHandler):
+    def get(self):
+        if not _APP_PASSWORD:
+            self.redirect("/dashboard"); return
+        if self.get_secure_cookie("maple_user"):
+            self.redirect("/dashboard"); return
+        self.render("login.html", error=None)
+
+    def post(self):
+        password = self.get_argument("password", "")
+        if password == _APP_PASSWORD:
+            self.set_secure_cookie("maple_user", "rutger", expires_days=30)
+            self.redirect(self.get_argument("next", "/dashboard"))
+        else:
+            self.render("login.html", error="Incorrect password.")
+
+
+class LogoutHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.clear_cookie("maple_user")
+        self.redirect("/login")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -317,8 +357,10 @@ class MatchScoreEditHandler(Base):
             self.send_error(404); return
         campaigns = db.get_campaigns()
         candidates = db.get_candidates()
+        profiles = db.get_profiles(campaign_id=match.get('campaign_id'))
         self.render("matches/form.html", match=match, campaigns=campaigns,
-                    candidates=candidates, page='matches')
+                    candidates=candidates, profiles=profiles,
+                    preselect_candidate=None, preselect_campaign=None, page='matches')
 
     def post(self, mid):
         data = {k: self.get_argument(k, '') for k in self.request.arguments}
@@ -388,7 +430,8 @@ class OutreachEditHandler(Base):
         campaigns = db.get_campaigns()
         candidates = db.get_candidates()
         self.render("outreach/form.html", outreach=outreach, campaigns=campaigns,
-                    candidates=candidates, page='outreach')
+                    candidates=candidates, preselect_candidate=None,
+                    preselect_campaign=None, page='outreach')
 
     def post(self, oid):
         data = {k: self.get_argument(k, '') for k in self.request.arguments}
@@ -595,8 +638,8 @@ class CandidateImportHandler(Base):
         files = self.request.files.get('csvfile', [])
         if not files:
             self.render("import/candidates.html", page='candidates',
-                        result={'imported': 0, 'skipped': 0},
-                        errors=['No file uploaded.'], preview=None)
+                        result={'imported': 0, 'skipped': 0, 'errors': ['No file uploaded.']},
+                        preview_rows=None, preview_headers=[])
             return
         content = files[0]['body'].decode('utf-8', errors='replace')
         try:
@@ -604,12 +647,14 @@ class CandidateImportHandler(Base):
             rows = list(reader)
         except Exception as e:
             self.render("import/candidates.html", page='candidates',
-                        result=None, errors=[f'CSV parse error: {e}'], preview=None)
+                        result=None, preview_rows=None, preview_headers=[])
             return
         imported, skipped, errors = db.import_candidates(rows)
+        preview_headers = list(rows[0].keys()) if rows else []
+        preview_rows = [list(r.values()) for r in rows[:5]]
         self.render("import/candidates.html", page='candidates',
-                    result={'imported': imported, 'skipped': skipped},
-                    errors=errors, preview=rows[:5])
+                    result={'imported': imported, 'skipped': skipped, 'errors': errors},
+                    preview_rows=preview_rows, preview_headers=preview_headers)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -631,13 +676,19 @@ class DailyDashboardHandler(Base):
 def make_app():
     db.init_db()
     db.migrate_phase2()
+    # Derive cookie secret from password (or use env override); never empty
+    _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
+    cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
     settings = {
         "template_path": TMPL,
         "static_path": os.path.join(os.path.dirname(__file__), "static"),
         "debug": False,
         "xsrf_cookies": False,
+        "cookie_secret": cookie_secret,
     }
     return tornado.web.Application([
+        (r"/login",                         LoginHandler),
+        (r"/logout",                        LogoutHandler),
         (r"/",                              DashboardHandler),
         (r"/dashboard",                     DashboardHandler),
         (r"/campaigns",                     CampaignListHandler),

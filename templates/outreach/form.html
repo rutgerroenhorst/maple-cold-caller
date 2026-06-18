@@ -41,7 +41,7 @@
           <label class="block text-xs font-medium text-slate-400 mb-1">Platform</label>
           <select name="platform" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
             {% for opt in ['LinkedIn', 'Instagram', 'Facebook', 'Email', 'WhatsApp', 'Twitter/X', 'Other'] %}
-            <option value="{{ opt }}" {% if outreach and outreach['platform'] == opt %}selected{% end %}>{{ opt }}</option>
+            <option value="{{ opt }}" {% if outreach and outreach.get('platform') == opt %}selected{% end %}>{{ opt }}</option>
             {% end %}
           </select>
         </div>
@@ -49,7 +49,7 @@
           <label class="block text-xs font-medium text-slate-400 mb-1">Outreach Step</label>
           <select name="outreach_step" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
             {% for opt in ['Connection Request', 'First DM', 'Follow-Up 1', 'Follow-Up 2', 'Qualification', 'Booking'] %}
-            <option value="{{ opt }}" {% if outreach and outreach['outreach_step'] == opt %}selected{% end %}>{{ opt }}</option>
+            <option value="{{ opt }}" {% if outreach and outreach.get('outreach_step') == opt %}selected{% end %}>{{ opt }}</option>
             {% end %}
           </select>
         </div>
@@ -63,7 +63,7 @@
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-400 mb-1">Sent Date</label>
-          <input type="date" name="sent_date" value="{{ outreach['sent_date'] if outreach else '' }}"
+          <input type="date" name="sent_date" value="{{ outreach.get('sent_date', '') if outreach else '' }}"
                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
         </div>
       </div>

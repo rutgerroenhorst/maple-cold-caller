@@ -309,10 +309,11 @@ def get_candidate(cid):
 
 def create_candidate(data):
     conn = get_db()
-    fields = ['full_name','profile_url','platform_source','current_role','past_sales_roles',
-              'cold_calling_experience','appointment_setting_experience','d2d_experience',
-              'b2b_experience','gatekeeper_experience','language_level','availability',
-              'commission_only_fit','proof_results','voice_sample_url','notes','global_score','status']
+    fields = ['full_name','profile_url','platform_source','current_role','email','phone',
+              'past_sales_roles','cold_calling_experience','appointment_setting_experience',
+              'd2d_experience','b2b_experience','gatekeeper_experience','language_level',
+              'availability','commission_only_fit','proof_results','voice_sample_url',
+              'notes','global_score','status']
     vals = [data.get(f, '') for f in fields]
     placeholders = ','.join(['?']*len(fields))
     c = conn.execute(f"INSERT INTO cold_caller_candidates ({','.join(fields)}) VALUES ({placeholders})", vals)
@@ -324,10 +325,11 @@ def create_candidate(data):
 
 def update_candidate(cid, data):
     conn = get_db()
-    fields = ['full_name','profile_url','platform_source','current_role','past_sales_roles',
-              'cold_calling_experience','appointment_setting_experience','d2d_experience',
-              'b2b_experience','gatekeeper_experience','language_level','availability',
-              'commission_only_fit','proof_results','voice_sample_url','notes','global_score','status']
+    fields = ['full_name','profile_url','platform_source','current_role','email','phone',
+              'past_sales_roles','cold_calling_experience','appointment_setting_experience',
+              'd2d_experience','b2b_experience','gatekeeper_experience','language_level',
+              'availability','commission_only_fit','proof_results','voice_sample_url',
+              'notes','global_score','status']
     sets = ', '.join(f"{f}=?" for f in fields) + ", updated_at=?"
     vals = [data.get(f, '') for f in fields] + [now(), cid]
     conn.execute(f"UPDATE cold_caller_candidates SET {sets} WHERE id=?", vals)
@@ -606,6 +608,8 @@ def migrate_phase2():
     conn = get_db()
     for sql in [
         "ALTER TABLE cold_caller_candidates ADD COLUMN ai_score_raw TEXT",
+        "ALTER TABLE cold_caller_candidates ADD COLUMN email TEXT",
+        "ALTER TABLE cold_caller_candidates ADD COLUMN phone TEXT",
         "ALTER TABLE interview_queue ADD COLUMN meeting_link TEXT",
         "ALTER TABLE interview_queue ADD COLUMN interview_result TEXT",
         "ALTER TABLE interview_queue ADD COLUMN notes TEXT",
@@ -678,11 +682,11 @@ def bulk_candidate_action(ids: list, action: str, value: str = None) -> int:
 
 def import_candidates(rows: list) -> tuple:
     imported, skipped, errors = 0, 0, []
-    fields = ['full_name', 'profile_url', 'platform_source', 'current_role', 'past_sales_roles',
-              'cold_calling_experience', 'appointment_setting_experience', 'd2d_experience',
-              'b2b_experience', 'gatekeeper_experience', 'language_level', 'availability',
-              'commission_only_fit', 'proof_results', 'voice_sample_url', 'notes',
-              'global_score', 'status']
+    fields = ['full_name', 'profile_url', 'platform_source', 'current_role', 'email', 'phone',
+              'past_sales_roles', 'cold_calling_experience', 'appointment_setting_experience',
+              'd2d_experience', 'b2b_experience', 'gatekeeper_experience', 'language_level',
+              'availability', 'commission_only_fit', 'proof_results', 'voice_sample_url',
+              'notes', 'global_score', 'status']
     placeholders = ','.join(['?'] * len(fields))
     conn = get_db()
     for i, row in enumerate(rows, 1):
