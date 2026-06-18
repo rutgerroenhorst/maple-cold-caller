@@ -1,0 +1,196 @@
+{% extends "../base.html" %}
+{% block title %}Add URL Source — Research Worker{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/research" class="text-slate-400 hover:text-white text-sm">Research</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">Add URL Source</h1>
+</div>
+{% end %}
+
+{% block content %}
+
+<div class="mb-5 bg-amber-950/40 border border-amber-900/40 rounded-xl px-4 py-3 text-xs text-amber-300 flex items-start gap-2">
+  <span class="text-base mt-0.5">🔒</span>
+  <span>{{ safety_notice }}</span>
+</div>
+
+<!-- Mode picker -->
+<div class="max-w-2xl" x-data="{ mode: 'Manual Paste' }">
+
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-5">
+    <h2 class="text-sm font-semibold text-white border-b border-slate-700 pb-3 mb-4">Choose Source Mode</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {% for label, icon, desc in [
+        ('Manual Paste', '📋', 'Paste text from Google or LinkedIn results'),
+        ('Google Search URL', '🔍', 'Paste a Google search URL — we try to fetch the results'),
+        ('Direct Profile URL', '👤', 'Single LinkedIn or public profile URL'),
+        ('Batch URLs', '📦', 'Multiple profile URLs, one per line'),
+      ] %}
+      <button type="button"
+              @click="mode = '{{ label }}'"
+              :class="mode === '{{ label }}' ? 'border-indigo-500 bg-indigo-950/50 text-white' : 'border-slate-700 text-slate-400 hover:border-slate-500'"
+              class="border rounded-xl p-3 text-left transition-all">
+        <div class="text-xl mb-1">{{ icon }}</div>
+        <div class="text-xs font-medium leading-tight">{{ label }}</div>
+        <div class="text-xs text-slate-500 mt-1 leading-tight hidden sm:block">{{ desc }}</div>
+      </button>
+      {% end %}
+    </div>
+  </div>
+
+  <!-- MANUAL PASTE form -->
+  <form x-show="mode === 'Manual Paste'" method="POST" action="/research/url" class="space-y-4">
+    <input type="hidden" name="source_mode" value="Manual Paste"/>
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="text-sm font-semibold text-white border-b border-slate-700 pb-3">Manual Paste</h2>
+      <p class="text-xs text-slate-400">Run a Google search like <code class="bg-slate-900 px-1 rounded">site:linkedin.com/in "cold caller" "dutch"</code>, copy all visible result text, and paste it below.</p>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Source Name</label>
+          <input type="text" name="source_name" placeholder="e.g. Google: cold caller dutch 2025"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Search Mission (optional)</label>
+          <select name="search_mission_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for m in missions %}<option value="{{ m['id'] }}">{{ m['name'] }}</option>{% end %}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Source URL (optional)</label>
+        <input type="url" name="source_url" placeholder="https://google.com/search?q=..."
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Paste Text Here</label>
+        <textarea name="raw_text" rows="12" required
+                  placeholder="Jan de Vries&#10;linkedin.com/in/jandevries&#10;Cold Caller | B2B Sales | Remote | Netherlands&#10;&#10;Thomas Bakker&#10;linkedin.com/in/thomasbakker&#10;Appointment Setter | SDR | Dutch | Amsterdam&#10;..."
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"></textarea>
+      </div>
+    </div>
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Save &amp; Extract Candidates</button>
+      <a href="/research" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Cancel</a>
+    </div>
+  </form>
+
+  <!-- GOOGLE SEARCH URL form -->
+  <form x-show="mode === 'Google Search URL'" method="POST" action="/research/url" class="space-y-4">
+    <input type="hidden" name="source_mode" value="Google Search URL"/>
+    <div class="bg-slate-800 border border-indigo-900/30 rounded-xl p-5 space-y-4">
+      <h2 class="text-sm font-semibold text-white border-b border-slate-700 pb-3">Google Search URL</h2>
+
+      <div class="bg-indigo-950/40 border border-indigo-800/30 rounded-lg px-4 py-3 text-xs text-indigo-300 space-y-1">
+        <p class="font-medium">How this works:</p>
+        <p>1. Run a Google search like <code class="bg-slate-900 px-1 rounded">site:linkedin.com/in "cold caller" "dutch"</code></p>
+        <p>2. Copy the full search URL from your browser address bar and paste it below.</p>
+        <p>3. Click Fetch — we'll try to extract LinkedIn URLs from the results page.</p>
+        <p class="text-amber-300">If Google blocks the fetch, we'll show clear instructions to paste the results manually instead.</p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Google Search URL</label>
+        <input type="url" name="source_url" required
+               placeholder="https://www.google.com/search?q=site:linkedin.com/in+%22cold+caller%22+%22dutch%22"
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Label (optional)</label>
+          <input type="text" name="source_name" placeholder="e.g. Google LI cold caller dutch"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Search Mission (optional)</label>
+          <select name="search_mission_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for m in missions %}<option value="{{ m['id'] }}">{{ m['name'] }}</option>{% end %}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Fetch &amp; Extract →</button>
+      <a href="/research" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Cancel</a>
+    </div>
+  </form>
+
+  <!-- DIRECT PROFILE URL form -->
+  <form x-show="mode === 'Direct Profile URL'" method="POST" action="/research/url" class="space-y-4">
+    <input type="hidden" name="source_mode" value="Direct Profile URL"/>
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="text-sm font-semibold text-white border-b border-slate-700 pb-3">Direct Profile URL</h2>
+
+      <div class="bg-amber-950/30 border border-amber-900/30 rounded-lg px-4 py-3 text-xs text-amber-300">
+        LinkedIn profiles require login — we can't fetch them automatically. The queue item will be created and marked <strong>Needs Manual Review</strong>. Open the profile in your browser to enrich it manually.
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Profile URL</label>
+        <input type="url" name="source_url" required
+               placeholder="https://linkedin.com/in/jandevries"
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Name (if known)</label>
+          <input type="text" name="source_name" placeholder="e.g. Jan de Vries"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Search Mission (optional)</label>
+          <select name="search_mission_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for m in missions %}<option value="{{ m['id'] }}">{{ m['name'] }}</option>{% end %}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Add to Queue →</button>
+      <a href="/research" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Cancel</a>
+    </div>
+  </form>
+
+  <!-- BATCH URLS form -->
+  <form x-show="mode === 'Batch URLs'" method="POST" action="/research/url" class="space-y-4">
+    <input type="hidden" name="source_mode" value="Batch URLs"/>
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="text-sm font-semibold text-white border-b border-slate-700 pb-3">Batch URLs</h2>
+      <p class="text-xs text-slate-400">Paste one URL per line. LinkedIn profiles will be queued as Needs Manual Review. Public pages will be automatically enriched.</p>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Batch Label</label>
+          <input type="text" name="source_name" placeholder="e.g. LinkedIn batch June 2025"
+                 class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Search Mission (optional)</label>
+          <select name="search_mission_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for m in missions %}<option value="{{ m['id'] }}">{{ m['name'] }}</option>{% end %}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">URLs (one per line)</label>
+        <textarea name="raw_text" rows="12" required
+                  placeholder="https://linkedin.com/in/jandevries&#10;https://linkedin.com/in/thomasbakker&#10;https://linkedin.com/in/sarajansen&#10;..."
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"></textarea>
+      </div>
+    </div>
+    <div class="flex gap-3">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Add Batch →</button>
+      <a href="/research" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Cancel</a>
+    </div>
+  </form>
+
+</div>
+
+{% end %}

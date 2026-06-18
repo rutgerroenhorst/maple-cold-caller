@@ -10,7 +10,7 @@
 {% end %}
 
 {% block header_actions %}
-<a href="/research/sources/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">+ Add Source</a>
+<a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">+ Add Source</a>
 {% end %}
 
 {% block content %}
@@ -20,10 +20,11 @@
 </div>
 
 <!-- Status filter tabs -->
-<div class="flex flex-wrap gap-2 mb-5">
+<div class="flex flex-wrap gap-2 mb-3">
   {% for label, val, count_key in [
-    ('All', '', 'new'),
+    ('All', '', ''),
     ('New', 'New', 'new'),
+    ('Needs Review', 'Needs Review', 'needs_review'),
     ('Approved', 'Approved', 'approved'),
     ('Moved → Candidates', 'Moved To Candidates', 'moved'),
     ('Rejected', 'Rejected', 'rejected'),
@@ -33,18 +34,50 @@
      class="text-xs px-3 py-1.5 rounded-full border transition-colors
             {% if status_filter == val %}bg-indigo-600 border-indigo-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
     {{ label }}
-    {% if val and counts.get(count_key, 0) %}
+    {% if count_key and counts.get(count_key, 0) %}
     <span class="ml-1 font-bold">{{ counts.get(count_key, 0) }}</span>
     {% end %}
   </a>
   {% end %}
 </div>
 
+<!-- Enrichment + Confidence filters -->
+<div class="flex flex-wrap gap-2 mb-5">
+  <span class="text-xs text-slate-500 self-center">Enrich:</span>
+  {% for label, val in [
+    ('Not Started', 'Not Started'),
+    ('Fetched', 'Fetched'),
+    ('Blocked', 'Blocked'),
+    ('Needs Manual Review', 'Needs Manual Review'),
+  ] %}
+  <a href="/research/queue?enrichment={{ val }}"
+     class="text-xs px-3 py-1 rounded-full border transition-colors
+            {% if enrich_filter == val %}bg-violet-700 border-violet-600 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+  <span class="text-xs text-slate-500 self-center ml-2">Confidence:</span>
+  {% for label, val in [('High', 'High'), ('Medium', 'Medium'), ('Low', 'Low')] %}
+  <a href="/research/queue?confidence={{ val }}"
+     class="text-xs px-3 py-1 rounded-full border transition-colors
+            {% if confidence_filter == val %}bg-teal-700 border-teal-600 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+  {% if status_filter or enrich_filter or confidence_filter %}
+  <a href="/research/queue" class="text-xs px-3 py-1 rounded-full bg-slate-700 text-slate-400 hover:text-white border border-slate-600">× Clear</a>
+  {% end %}
+</div>
+
 {% if items %}
 <div class="space-y-2">
   {% for item in items %}
+  {% set estatus = item.get('enrichment_status') or 'Not Started' %}
+  {% set conf = item.get('confidence_score') or 'Low' %}
   <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-start gap-3
-              {% if item['status'] in ('Rejected', 'Duplicate') %}opacity-60{% end %}">
+              {% if item['status'] in ('Rejected', 'Duplicate') %}opacity-60{% end %}
+              {% if item['status'] == 'Needs Review' %}border-amber-800/50{% end %}">
+
     <!-- Score badge -->
     <div class="flex-shrink-0 w-12 h-12 rounded-xl flex flex-col items-center justify-center
                 {% if item['level'] == 'A' %}bg-green-900 text-green-300
@@ -57,54 +90,70 @@
 
     <div class="flex-1 min-w-0">
       <div class="flex flex-wrap items-center gap-2 mb-0.5">
-        <span class="text-sm font-semibold text-white">{{ item['name'] }}</span>
-        <span class="badge bg-slate-700 text-slate-300 text-xs">{{ item['status'] }}</span>
-        {% if item['best_role'] %}
-        <span class="text-xs text-indigo-400">{{ item['best_role'] }}</span>
+        <a href="/research/queue/{{ item['id'] }}" class="text-sm font-semibold text-white hover:text-indigo-300 transition-colors">{{ item['name'] }}</a>
+        <span class="badge
+          {% if item['status'] == 'Needs Review' %}bg-amber-900 text-amber-300
+          {% elif item['status'] == 'Approved' %}bg-green-900 text-green-300
+          {% elif item['status'] == 'Moved To Candidates' %}bg-emerald-900 text-emerald-300
+          {% else %}bg-slate-700 text-slate-300{% end %}
+          text-xs">{{ item['status'] }}</span>
+        {% if item['best_role'] %}<span class="text-xs text-indigo-400">{{ item['best_role'] }}</span>{% end %}
+        {% if item['mission_name'] %}<span class="text-xs text-slate-500">{{ item['mission_name'] }}</span>{% end %}
+
+        <!-- Enrichment indicator -->
+        {% if estatus == 'Fetched' %}
+        <span class="badge bg-teal-900 text-teal-300 text-xs">✓ Enriched</span>
+        {% elif estatus in ('Blocked', 'Needs Manual Review') %}
+        <span class="badge bg-amber-950 text-amber-400 text-xs">⚠ Blocked</span>
         {% end %}
-        {% if item['mission_name'] %}
-        <span class="text-xs text-slate-500">{{ item['mission_name'] }}</span>
+
+        <!-- Confidence dot -->
+        {% if conf == 'High' %}
+        <span class="text-xs text-green-400">● High confidence</span>
+        {% elif conf == 'Medium' %}
+        <span class="text-xs text-yellow-400">● Medium</span>
         {% end %}
       </div>
-      {% if item['detected_role'] %}
-      <p class="text-xs text-slate-400">{{ item['detected_role'] }}</p>
-      {% end %}
-      {% if item['detected_language'] %}
-      <p class="text-xs text-green-400">{{ item['detected_language'] }}</p>
-      {% end %}
+
+      {% if item['detected_role'] %}<p class="text-xs text-slate-400">{{ item['detected_role'] }}</p>{% end %}
+      {% if item.get('fetched_headline') %}<p class="text-xs text-teal-400">{{ item['fetched_headline'][:100] }}</p>{% end %}
+      {% if item.get('fetched_location') %}<p class="text-xs text-slate-500">📍 {{ item['fetched_location'] }}</p>{% end %}
+
       {% if item['possible_profile_url'] %}
       <a href="{{ item['possible_profile_url'] }}" target="_blank" rel="noopener"
          class="text-xs text-slate-500 hover:text-indigo-400 truncate block mt-0.5">
-        {{ item['possible_profile_url'] }}
+        {{ item['possible_profile_url'][:70] }}{% if len(item['possible_profile_url']) > 70 %}…{% end %}
       </a>
-      {% end %}
-      {% if item['reason'] %}
-      <p class="text-xs text-slate-500 mt-1 truncate">{{ item['reason'] }}</p>
       {% end %}
     </div>
 
+    <!-- Quick actions -->
     <div class="flex flex-col gap-1.5 flex-shrink-0">
       <a href="/research/queue/{{ item['id'] }}"
          class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors text-center">
         Review
       </a>
-      {% if item['status'] == 'New' %}
+      {% if item['status'] in ('New', 'Needs Review') %}
+      <!-- Enrich button -->
+      {% if estatus in ('Not Started', '') %}
+      <form method="POST" action="/research/queue/{{ item['id'] }}/enrich">
+        <button type="submit" class="w-full text-xs bg-teal-900/50 hover:bg-teal-900/80 text-teal-300 px-3 py-1.5 rounded-lg transition-colors">🔍 Enrich</button>
+      </form>
+      {% end %}
       <form method="POST" action="/research/queue/{{ item['id'] }}/approve">
-        <button type="submit" class="w-full text-xs bg-green-900/50 hover:bg-green-900/80 text-green-300 px-3 py-1.5 rounded-lg transition-colors">
-          ✓ Approve
-        </button>
+        <button type="submit" class="w-full text-xs bg-green-900/50 hover:bg-green-900/80 text-green-300 px-3 py-1.5 rounded-lg transition-colors">✓ Approve</button>
       </form>
       <form method="POST" action="/research/queue/{{ item['id'] }}/reject">
-        <button type="submit" class="w-full text-xs bg-red-950/50 hover:bg-red-950/80 text-red-400 px-3 py-1.5 rounded-lg transition-colors">
-          ✗ Reject
-        </button>
+        <button type="submit" class="w-full text-xs bg-red-950/50 hover:bg-red-950/80 text-red-400 px-3 py-1.5 rounded-lg transition-colors">✗ Reject</button>
       </form>
       {% elif item['status'] == 'Approved' %}
       <form method="POST" action="/research/queue/{{ item['id'] }}/move-to-candidates">
-        <button type="submit" class="w-full text-xs bg-emerald-900/50 hover:bg-emerald-900/80 text-emerald-300 px-3 py-1.5 rounded-lg transition-colors">
-          → Candidates
-        </button>
+        <button type="submit" class="w-full text-xs bg-emerald-900/50 hover:bg-emerald-900/80 text-emerald-300 px-3 py-1.5 rounded-lg transition-colors">→ Candidates</button>
       </form>
+      {% end %}
+      {% if item['possible_profile_url'] %}
+      <a href="{{ item['possible_profile_url'] }}" target="_blank" rel="noopener"
+         class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1.5 rounded-lg transition-colors text-center">↗ Profile</a>
       {% end %}
     </div>
   </div>
@@ -114,10 +163,12 @@
 <div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
   <p class="text-slate-400 text-sm mb-3">
     {% if status_filter %}No candidates with status "{{ status_filter }}".
+    {% elif enrich_filter %}No candidates with enrichment status "{{ enrich_filter }}".
+    {% elif confidence_filter %}No {{ confidence_filter }} confidence candidates.
     {% else %}Review queue is empty.{% end %}
   </p>
-  <a href="/research/sources/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">
-    Add a Source
+  <a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+    + Add Source
   </a>
 </div>
 {% end %}

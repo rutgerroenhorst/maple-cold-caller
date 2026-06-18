@@ -1089,21 +1089,36 @@ def run_agent(agent_id: int):
 
     try:
         if atype == 'candidate_research':
-            rs = get_research_summary()
+            try:
+                rs = get_research_summary_ext()
+            except Exception:
+                rs = get_research_summary()
+                rs.setdefault('sources_needs_fetch', 0)
+                rs.setdefault('sources_blocked', 0)
+                rs.setdefault('needs_enrichment', 0)
+                rs.setdefault('enrichment_blocked', 0)
+                rs.setdefault('enriched', 0)
+                rs.setdefault('high_confidence', 0)
+                rs.setdefault('medium_confidence', 0)
             missions = to_list(conn.execute(
                 "SELECT * FROM search_missions WHERE status='active'").fetchall())
             total_cands = conn.execute(
                 "SELECT COUNT(*) FROM cold_caller_candidates").fetchone()[0]
 
             output = "Candidate Research Worker — Status\n\n"
-            output += f"Active missions:       {rs['active_missions']}\n"
-            output += f"Sources in inbox:      {rs['total_sources']} ({rs['unprocessed']} unprocessed)\n"
-            output += f"Review queue:          {rs['queue_total']} total\n"
-            output += f"  • New:               {rs['queue_new']}\n"
-            output += f"  • Approved:          {rs['queue_approved']}\n"
-            output += f"  • Moved→Candidates:  {rs['moved_to_candidates']}\n"
-            output += f"  • Rejected/Dupes:    {rs['queue_rejected'] + rs['queue_duplicate']}\n"
-            output += f"Pipeline candidates:   {total_cands}\n\n"
+            output += f"Active missions:         {rs['active_missions']}\n"
+            output += f"Sources in inbox:        {rs['total_sources']} ({rs['unprocessed']} unprocessed)\n"
+            output += f"  • Needs fetch:         {rs.get('sources_needs_fetch', 0)}\n"
+            output += f"  • Blocked/Manual:      {rs.get('sources_blocked', 0)}\n"
+            output += f"Review queue:            {rs['queue_total']} total\n"
+            output += f"  • New:                 {rs['queue_new']}\n"
+            output += f"  • Needs Review:        {rs['queue_needs_review']}\n"
+            output += f"  • Approved:            {rs['queue_approved']}\n"
+            output += f"  • Moved→Candidates:    {rs['moved_to_candidates']}\n"
+            output += f"  • Rejected/Dupes:      {rs['queue_rejected'] + rs['queue_duplicate']}\n"
+            output += f"Enrichment:              {rs.get('enriched', 0)} enriched | {rs.get('needs_enrichment', 0)} pending | {rs.get('enrichment_blocked', 0)} blocked\n"
+            output += f"Confidence:              {rs.get('high_confidence', 0)} high | {rs.get('medium_confidence', 0)} medium\n"
+            output += f"Pipeline candidates:     {total_cands}\n\n"
 
             if missions:
                 output += "Active search missions:\n"
@@ -1117,12 +1132,22 @@ def run_agent(agent_id: int):
 
             if rs['top_candidate']:
                 tc = rs['top_candidate']
-                output += f"Top candidate in queue: {tc['name']} — score {tc['score']} ({tc['level']}) — {tc['best_role']}\n"
+                conf = tc.get('confidence_score') or 'Low'
+                output += f"Top candidate: {tc['name']} — score {tc['score']} ({tc['level']}) — {tc['best_role']} — confidence: {conf}\n"
 
-            # Set issue / recommendation
-            if rs['unprocessed'] > 0:
+            # Prioritised issue/recommendation
+            if rs.get('sources_blocked', 0) > 0:
+                issue = f"{rs['sources_blocked']} source(s) blocked or need manual review"
+                recommendation = "Go to /research/sources — open blocked sources and paste the content manually"
+            elif rs['unprocessed'] > 0:
                 issue = f"{rs['unprocessed']} source(s) waiting to be processed"
                 recommendation = "Go to /research/sources and click 'Process' on each unprocessed source"
+            elif rs.get('needs_enrichment', 0) > 0:
+                issue = f"{rs['needs_enrichment']} queue item(s) not yet enriched"
+                recommendation = "Go to /research/queue and click 'Enrich Public Data' on unenriched items"
+            elif rs['queue_needs_review'] > 0:
+                issue = f"{rs['queue_needs_review']} candidate(s) need manual review"
+                recommendation = "Go to /research/queue?status=Needs+Review and review each blocked candidate"
             elif rs['queue_new'] > 0:
                 issue = f"{rs['queue_new']} candidates in queue waiting for review"
                 recommendation = "Go to /research/queue and approve or reject candidates"
@@ -1131,7 +1156,7 @@ def run_agent(agent_id: int):
                 recommendation = "Create a search mission at /search-missions/new"
             else:
                 issue = ""
-                recommendation = "Generate new search queries at /research/queries and paste results into /research/sources"
+                recommendation = "Add a URL source at /research/url or paste results at /research/sources/new"
 
         elif atype == 'talent_scout':
             rows = to_list(conn.execute(
@@ -2589,3 +2614,750 @@ def get_action_task_summary() -> dict:
     }
     conn.close()
     return d
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Link Research Worker
+# ──────────────────────────────────────────────────────────────────────────────
+
+import re as _lre
+import urllib.request as _urllib_req
+import urllib.error as _urllib_err
+import urllib.parse as _urllib_parse
+import html as _html_mod
+from html.parser import HTMLParser as _HTMLParser
+
+# ── MIGRATION (phase3) ─────────────────────────────────────────────────────────
+
+def migrate_phase3():
+    """Add link-research columns. Safe to call multiple times."""
+    conn = get_db()
+    for sql in [
+        # candidate_sources
+        "ALTER TABLE candidate_sources ADD COLUMN title TEXT",
+        "ALTER TABLE candidate_sources ADD COLUMN source_mode TEXT DEFAULT 'Manual Paste'",
+        "ALTER TABLE candidate_sources ADD COLUMN fetch_status TEXT DEFAULT 'Not Fetched'",
+        "ALTER TABLE candidate_sources ADD COLUMN fetch_error TEXT",
+        "ALTER TABLE candidate_sources ADD COLUMN fetched_title TEXT",
+        "ALTER TABLE candidate_sources ADD COLUMN fetched_html_excerpt TEXT",
+        "ALTER TABLE candidate_sources ADD COLUMN fetched_at TEXT",
+        # candidate_research_queue
+        "ALTER TABLE candidate_research_queue ADD COLUMN enrichment_status TEXT DEFAULT 'Not Started'",
+        "ALTER TABLE candidate_research_queue ADD COLUMN enrichment_error TEXT",
+        "ALTER TABLE candidate_research_queue ADD COLUMN fetched_headline TEXT",
+        "ALTER TABLE candidate_research_queue ADD COLUMN fetched_location TEXT",
+        "ALTER TABLE candidate_research_queue ADD COLUMN fetched_about_excerpt TEXT",
+        "ALTER TABLE candidate_research_queue ADD COLUMN fetched_profile_text TEXT",
+        "ALTER TABLE candidate_research_queue ADD COLUMN researched_at TEXT",
+        "ALTER TABLE candidate_research_queue ADD COLUMN confidence_score TEXT DEFAULT 'Low'",
+    ]:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except Exception:
+            pass
+    conn.close()
+
+
+# ── EXTENDED FIELD LISTS ───────────────────────────────────────────────────────
+
+_CS_FIELDS_EXT = [
+    'source_type', 'source_name', 'search_mission_id', 'raw_text', 'source_url',
+    'processed', 'title', 'source_mode', 'fetch_status', 'fetch_error',
+    'fetched_title', 'fetched_html_excerpt', 'fetched_at',
+]
+
+_RQ_FIELDS_EXT = [
+    'search_mission_id', 'candidate_source_id', 'name', 'possible_profile_url',
+    'source', 'source_url', 'snippet', 'detected_role', 'detected_language',
+    'detected_keywords', 'score', 'level', 'best_role', 'best_offer_type',
+    'reason', 'risk', 'next_action', 'status', 'notes', 'linked_candidate_id',
+    'enrichment_status', 'enrichment_error', 'fetched_headline', 'fetched_location',
+    'fetched_about_excerpt', 'fetched_profile_text', 'researched_at', 'confidence_score',
+]
+
+
+# ── HTTP FETCH ─────────────────────────────────────────────────────────────────
+
+_FETCH_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/123.0.0.0 Safari/537.36'
+    ),
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9,nl;q=0.8',
+}
+
+_FETCH_TIMEOUT = 10
+_MAX_BYTES = 400_000   # 400 KB limit
+
+
+def fetch_public_url(url: str) -> dict:
+    """
+    Fetch a public URL via plain HTTP. Returns:
+      {ok, status_code, content_type, html, title, text_excerpt, error, blocked}
+
+    Rules:
+    - Only HTTP(S). No authentication.
+    - If blocked / login-required / 403 / unusual redirect → blocked=True.
+    - If any error → ok=False, error=message.
+    - Respects robots: does not bypass anything; just reads public pages.
+    """
+    result = {
+        'ok': False, 'status_code': 0, 'content_type': '',
+        'html': '', 'title': '', 'text_excerpt': '', 'error': '', 'blocked': False,
+    }
+
+    if not url or not url.strip():
+        result['error'] = 'Empty URL'
+        return result
+
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+
+    # LinkedIn always blocks unauthenticated scraping — mark immediately
+    parsed = _urllib_parse.urlparse(url)
+    host = parsed.netloc.lower().lstrip('www.')
+    if 'linkedin.com' in host:
+        result['blocked'] = True
+        result['error'] = (
+            'LinkedIn requires login to view profiles. '
+            'Open this URL manually in your browser and paste the visible text into a Manual Paste source.'
+        )
+        return result
+
+    try:
+        req = _urllib_req.Request(url, headers=_FETCH_HEADERS)
+        with _urllib_req.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+            result['status_code'] = resp.status
+            ct = resp.headers.get('Content-Type', '')
+            result['content_type'] = ct
+
+            if resp.status in (301, 302, 303, 307, 308):
+                result['blocked'] = True
+                result['error'] = f'Redirect (status {resp.status}) — may require login'
+                return result
+
+            raw = resp.read(_MAX_BYTES)
+            try:
+                html = raw.decode('utf-8', errors='replace')
+            except Exception:
+                html = raw.decode('latin-1', errors='replace')
+
+            result['html'] = html
+            result['ok'] = True
+
+            # Detect login / block pages
+            block_signals = [
+                'sign in', 'log in', 'login required', 'create account',
+                'join linkedin', 'authwall', 'checkpoint', 'access denied',
+                '403 forbidden', 'rate limited', 'captcha',
+            ]
+            html_lower = html.lower()
+            if any(s in html_lower for s in block_signals[:5]) and resp.status in (200,):
+                # check title for extra confidence
+                title_m = _lre.search(r'<title[^>]*>(.*?)</title>', html, _lre.IGNORECASE | _lre.DOTALL)
+                t = title_m.group(1).strip() if title_m else ''
+                if any(s in t.lower() for s in ['sign in', 'log in', 'login']):
+                    result['blocked'] = True
+                    result['error'] = (
+                        'Page requires login. '
+                        'Open it manually and paste the visible text into a Manual Paste source.'
+                    )
+
+            # Extract title
+            title_m = _lre.search(r'<title[^>]*>(.*?)</title>', html, _lre.IGNORECASE | _lre.DOTALL)
+            result['title'] = _html_mod.unescape(title_m.group(1).strip()) if title_m else ''
+
+            # Extract plain text excerpt
+            result['text_excerpt'] = _html_to_text(html)[:3000]
+
+    except _urllib_err.HTTPError as e:
+        result['status_code'] = e.code
+        if e.code in (401, 403, 429):
+            result['blocked'] = True
+            result['error'] = f'HTTP {e.code} — access denied or rate limited'
+        else:
+            result['error'] = f'HTTP error {e.code}'
+    except _urllib_err.URLError as e:
+        result['error'] = f'URL error: {e.reason}'
+    except Exception as e:
+        result['error'] = f'Fetch error: {e}'
+
+    return result
+
+
+class _TextExtractor(_HTMLParser):
+    """Minimal HTML → plain text converter."""
+    SKIP_TAGS = {'script', 'style', 'noscript', 'head', 'meta', 'link', 'img'}
+
+    def __init__(self):
+        super().__init__()
+        self._skip = 0
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in self.SKIP_TAGS:
+            self._skip += 1
+
+    def handle_endtag(self, tag):
+        if tag.lower() in self.SKIP_TAGS and self._skip > 0:
+            self._skip -= 1
+        if tag.lower() in ('p', 'div', 'br', 'li', 'h1', 'h2', 'h3', 'h4', 'tr'):
+            self.parts.append('\n')
+
+    def handle_data(self, data):
+        if self._skip == 0:
+            self.parts.append(data)
+
+
+def _html_to_text(html: str) -> str:
+    p = _TextExtractor()
+    try:
+        p.feed(html)
+    except Exception:
+        pass
+    text = ''.join(p.parts)
+    # Collapse whitespace
+    text = _lre.sub(r'\n{3,}', '\n\n', text)
+    text = _lre.sub(r'[ \t]+', ' ', text)
+    return text.strip()
+
+
+# ── HTML LINK EXTRACTION ───────────────────────────────────────────────────────
+
+_HREF_RE = _lre.compile(r'href=["\']([^"\'>\s]+)["\']', _lre.IGNORECASE)
+_LI_PROFILE_RE = _lre.compile(r'https?://(?:www\.)?linkedin\.com/in/([\w\-]+)/?', _lre.IGNORECASE)
+_LI_SLUG_RE = _lre.compile(r'linkedin\.com/in/([\w\-]+)', _lre.IGNORECASE)
+
+
+def extract_links_from_html(html: str, base_url: str = '') -> list:
+    """Return list of absolute URL strings found in HTML href attributes."""
+    links = []
+    for m in _HREF_RE.finditer(html):
+        href = m.group(1)
+        if href.startswith('#') or href.startswith('javascript'):
+            continue
+        if href.startswith('http'):
+            links.append(href)
+        elif base_url and href.startswith('/'):
+            parsed = _urllib_parse.urlparse(base_url)
+            links.append(f"{parsed.scheme}://{parsed.netloc}{href}")
+    return links
+
+
+def extract_linkedin_profile_urls(text_or_html: str) -> list:
+    """
+    Extract unique linkedin.com/in/{slug} URLs from any text/HTML.
+    Returns list of full https:// URLs, deduped.
+    """
+    seen = {}
+    for m in _LI_PROFILE_RE.finditer(text_or_html):
+        slug = m.group(1).lower()
+        url = f"https://www.linkedin.com/in/{slug}/"
+        seen[slug] = url
+    # Also catch bare slugs like 'linkedin.com/in/jandevries'
+    for m in _LI_SLUG_RE.finditer(text_or_html):
+        slug = m.group(1).lower()
+        if slug not in seen:
+            seen[slug] = f"https://www.linkedin.com/in/{slug}/"
+    return list(seen.values())
+
+
+# ── NAME EXTRACTION FROM TITLES ────────────────────────────────────────────────
+
+_LI_TITLE_RE = _lre.compile(
+    r'^(?:LinkedIn\s*[·•\-–|]\s*)?'       # optional "LinkedIn · "
+    r'([A-Z][^\|•·\-–]{2,40}?)'           # capture: name part
+    r'\s*[\|•·\-–]',                       # separator
+    _lre.IGNORECASE
+)
+_NAME_PATTERNS = [
+    # "LinkedIn · Name"
+    _lre.compile(r'LinkedIn\s*[·•]\s*([A-Z][a-zÀ-ÿ\-]+(?:\s+[A-Z][a-zÀ-ÿ\-]+){1,4})', _lre.IGNORECASE),
+    # "Name — Title" or "Name - Title" or "Name | Title"
+    _lre.compile(r'^([A-Z][a-zÀ-ÿ\-]+(?:\s+[A-Z][a-zÀ-ÿ\-]+){1,4})\s*[—\-|]'),
+]
+
+def _name_from_title(title: str, slug: str = '') -> str:
+    """Try to extract a human name from a page title. Falls back to slug."""
+    t = title.strip()
+    for pat in _NAME_PATTERNS:
+        m = pat.search(t)
+        if m:
+            candidate = m.group(1).strip()
+            # must look like 2+ words or be a known name format
+            parts = candidate.split()
+            if len(parts) >= 2:
+                return candidate
+    # Fallback: slug → "Jan-de-vries" → "Jan De Vries"
+    if slug:
+        return ' '.join(w.capitalize() for w in slug.replace('-', ' ').split())
+    return 'Unknown Candidate'
+
+
+# ── GOOGLE SEARCH URL PROCESSING ──────────────────────────────────────────────
+
+_GOOGLE_RESULT_BLOCK_RE = _lre.compile(
+    r'<(?:div|li)[^>]*class="[^"]*(?:g|result|gs-result)[^"]*"[^>]*>(.*?)</(?:div|li)>',
+    _lre.IGNORECASE | _lre.DOTALL
+)
+_G_TITLE_RE = _lre.compile(r'<h3[^>]*>(.*?)</h3>', _lre.IGNORECASE | _lre.DOTALL)
+_G_SNIPPET_RE = _lre.compile(
+    r'(?:<span[^>]*class="[^"]*st[^"]*"[^>]*>|<div[^>]*class="[^"]*VwiC3b[^"]*"[^>]*>)'
+    r'(.*?)</(?:span|div)>',
+    _lre.IGNORECASE | _lre.DOTALL
+)
+
+
+def process_google_search_url(source_id: int) -> dict:
+    """
+    Fetch a Google search URL source, extract LinkedIn profile URLs and result blocks,
+    create research queue items. Returns status dict.
+    """
+    source = get_candidate_source(source_id)
+    if not source:
+        return {'ok': False, 'error': 'Source not found'}
+
+    url = (source.get('source_url') or '').strip()
+    if not url:
+        return {'ok': False, 'error': 'No source URL provided'}
+
+    # Update: fetching
+    _update_source_fetch_status(source_id, 'Fetching...')
+
+    fetch = fetch_public_url(url)
+
+    if fetch.get('blocked'):
+        _update_source_fetch_status(source_id, 'Blocked',
+                                    error=fetch.get('error', 'Blocked'),
+                                    title=fetch.get('title', ''))
+        return {
+            'ok': False,
+            'blocked': True,
+            'error': fetch['error'],
+            'manual_review_needed': True,
+            'instructions': (
+                "Google blocked this automated fetch. "
+                "To add these results: open the Google search URL in your browser, "
+                "select all visible result text (Ctrl+A or Cmd+A), copy it, "
+                "then create a new source using Manual Paste mode and paste the text there."
+            ),
+        }
+
+    if not fetch['ok']:
+        _update_source_fetch_status(source_id, 'Failed', error=fetch.get('error', ''))
+        return {'ok': False, 'error': fetch['error']}
+
+    html = fetch['html']
+    text = fetch['text_excerpt']
+    title = fetch.get('title', '')
+
+    # Extract LinkedIn URLs from both HTML and text
+    li_urls = extract_linkedin_profile_urls(html + '\n' + text)
+
+    # Also try to pull structured Google result blocks
+    result_blocks = []
+    for block_m in _GOOGLE_RESULT_BLOCK_RE.finditer(html):
+        block_html = block_m.group(1)
+        title_m = _G_TITLE_RE.search(block_html)
+        block_title = _html_mod.unescape(_lre.sub(r'<[^>]+>', '', title_m.group(1))) if title_m else ''
+        snip_m = _G_SNIPPET_RE.search(block_html)
+        block_snip = _html_mod.unescape(_lre.sub(r'<[^>]+>', '', snip_m.group(1))).strip() if snip_m else ''
+        block_li_urls = extract_linkedin_profile_urls(block_html)
+        if block_title or block_li_urls:
+            result_blocks.append({
+                'title': block_title,
+                'snippet': block_snip,
+                'li_urls': block_li_urls,
+            })
+
+    excerpt = text[:1500]
+    _update_source_fetch_status(source_id, 'Fetched', title=title, excerpt=excerpt)
+
+    # If we got very little useful content, mark as Needs Manual Review
+    if not li_urls and len(text) < 200:
+        _update_source_fetch_status(source_id, 'Needs Manual Review',
+                                    error='Could not extract useful content from Google results page. Please paste results manually.',
+                                    title=title, excerpt=excerpt)
+        return {
+            'ok': False,
+            'blocked': False,
+            'manual_review_needed': True,
+            'error': 'Could not extract useful content.',
+            'instructions': (
+                "The fetched page had no extractable LinkedIn URLs or candidate text. "
+                "Open the Google search URL in your browser, copy all visible result text, "
+                "and paste it into a new Manual Paste source."
+            ),
+        }
+
+    # Build raw_text from extracted blocks + URLs for the existing extractor
+    raw_parts = []
+    if result_blocks:
+        for b in result_blocks:
+            parts = []
+            if b['title']:
+                parts.append(b['title'])
+            if b['snippet']:
+                parts.append(b['snippet'])
+            if b['li_urls']:
+                parts.extend(b['li_urls'])
+            raw_parts.append('\n'.join(parts))
+    elif li_urls:
+        raw_parts = li_urls
+
+    # Supplement with plain text from the page
+    raw_parts.append(text[:2000])
+
+    combined_raw = '\n\n'.join(raw_parts)
+
+    # Store the combined raw text and re-process
+    conn = get_db()
+    conn.execute("UPDATE candidate_sources SET raw_text=? WHERE id=?", (combined_raw, source_id))
+    conn.commit()
+    conn.close()
+
+    created = extract_candidates_from_source(source_id)
+
+    return {
+        'ok': True,
+        'li_urls_found': len(li_urls),
+        'result_blocks_found': len(result_blocks),
+        'queue_items_created': len(created),
+        'fetch_blocked': False,
+    }
+
+
+def _update_source_fetch_status(source_id: int, status: str,
+                                 error: str = '', title: str = '', excerpt: str = ''):
+    conn = get_db()
+    conn.execute(
+        """UPDATE candidate_sources
+           SET fetch_status=?, fetch_error=?, fetched_title=?,
+               fetched_html_excerpt=?, fetched_at=datetime('now'), updated_at=datetime('now')
+           WHERE id=?""",
+        (status, error, title, excerpt, source_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── DIRECT / BATCH URL SOURCE CREATION ────────────────────────────────────────
+
+def create_source_from_url(url: str, source_mode: str,
+                            mission_id: int = None,
+                            title: str = '') -> int:
+    """
+    Create a candidate_source for a single URL (Direct Profile URL mode).
+    Attempts to extract the slug as a name and creates a queue item.
+    Returns source_id.
+    """
+    url = url.strip()
+    # Try to get slug from LinkedIn URL
+    slug_m = _LI_SLUG_RE.search(url)
+    slug = slug_m.group(1) if slug_m else ''
+    name_guess = ' '.join(w.capitalize() for w in slug.replace('-', ' ').split()) if slug else 'Unknown Candidate'
+
+    source_title = title or name_guess or url[:80]
+
+    conn = get_db()
+    cur = conn.execute(
+        """INSERT INTO candidate_sources
+           (source_type, source_name, search_mission_id, raw_text, source_url,
+            processed, title, source_mode, fetch_status)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ('direct_profile_url', source_title, mission_id,
+         url, url, 0, source_title, source_mode, 'Not Fetched')
+    )
+    conn.commit()
+    sid = cur.lastrowid
+    conn.close()
+    return sid
+
+
+# ── ENRICHMENT ────────────────────────────────────────────────────────────────
+
+def _compute_confidence(item: dict) -> str:
+    """High / Medium / Low confidence based on available data."""
+    has_name = item.get('name', '') not in ('', 'Unknown Candidate')
+    has_url = bool(item.get('possible_profile_url', ''))
+    kw = (item.get('detected_keywords', '') or '') + (item.get('fetched_profile_text', '') or '')
+    has_sales_kw = any(k in kw.lower() for k in ['cold call', 'appointment set', 'sdr', 'outbound', 'b2b'])
+
+    if has_name and has_url and has_sales_kw:
+        return 'High'
+    elif has_url and has_sales_kw:
+        return 'Medium'
+    else:
+        return 'Low'
+
+
+def enrich_research_candidate(rid: int) -> dict:
+    """
+    Attempt public enrichment of a research queue item.
+    Fetches the public profile URL (if not LinkedIn) or marks as Needs Manual Review.
+    Updates the queue item and returns status dict.
+    """
+    item = get_research_queue_item(rid)
+    if not item:
+        return {'ok': False, 'error': 'Item not found'}
+
+    url = (item.get('possible_profile_url') or '').strip()
+    if not url:
+        update_research_queue_item_ext(rid, {
+            'enrichment_status': 'Failed',
+            'enrichment_error': 'No profile URL available for enrichment',
+            'researched_at': now(),
+        })
+        return {'ok': False, 'error': 'No profile URL'}
+
+    # LinkedIn: always blocked without login
+    if 'linkedin.com/in/' in url.lower():
+        update_research_queue_item_ext(rid, {
+            'enrichment_status': 'Blocked',
+            'enrichment_error': (
+                'LinkedIn requires login to view profiles. '
+                'Open this profile manually in your browser and add visible text via Manual Paste.'
+            ),
+            'researched_at': now(),
+            'confidence_score': _compute_confidence(item),
+        })
+        mark_needs_manual_review(rid, (
+            'LinkedIn profile requires manual review. '
+            'Open the profile URL in your browser, copy the visible text, '
+            'and add it as a Manual Paste source to enrich this candidate.'
+        ))
+        return {
+            'ok': False,
+            'blocked': True,
+            'error': 'LinkedIn requires login',
+            'manual_review_needed': True,
+        }
+
+    # Try fetching non-LinkedIn public page
+    fetch = fetch_public_url(url)
+
+    if fetch.get('blocked') or not fetch.get('ok'):
+        update_research_queue_item_ext(rid, {
+            'enrichment_status': 'Blocked' if fetch.get('blocked') else 'Failed',
+            'enrichment_error': fetch.get('error', 'Fetch failed'),
+            'researched_at': now(),
+            'confidence_score': _compute_confidence(item),
+        })
+        if fetch.get('blocked'):
+            mark_needs_manual_review(rid, fetch.get('error', 'Page blocked'))
+        return {'ok': False, 'blocked': fetch.get('blocked', False), 'error': fetch.get('error', '')}
+
+    html = fetch.get('html', '')
+    text = fetch.get('text_excerpt', '')
+    page_title = fetch.get('title', '')
+
+    # Extract name from page title if we have a better one
+    slug_m = _LI_SLUG_RE.search(url)
+    slug = slug_m.group(1) if slug_m else ''
+    name = _name_from_title(page_title, slug)
+    if name and name != 'Unknown Candidate' and item.get('name', '') in ('', 'Unknown Candidate'):
+        pass  # will update name below
+
+    # Parse headline / location from text (look for common patterns)
+    headline = ''
+    location = ''
+    about = ''
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    # Heuristic: first non-empty line after name often contains headline
+    for i, line in enumerate(lines[:20]):
+        if 'cold call' in line.lower() or 'sales' in line.lower() or 'sdr' in line.lower():
+            if not headline:
+                headline = line[:200]
+        if any(city in line.lower() for city in ['amsterdam', 'rotterdam', 'utrecht', 'netherlands', 'nederland', 'den haag', 'eindhoven']):
+            if not location:
+                location = line[:100]
+
+    # About: look for a longer descriptive paragraph
+    for line in lines:
+        if len(line) > 80 and not line.startswith('http'):
+            if not about:
+                about = line[:500]
+                break
+
+    # Re-score with enriched text
+    enriched_data = {
+        'name': name if name != 'Unknown Candidate' else item.get('name', ''),
+        'snippet': item.get('snippet', ''),
+        'detected_role': item.get('detected_role', ''),
+        'detected_keywords': item.get('detected_keywords', '') + ' ' + text[:500],
+    }
+    scored = score_research_candidate(enriched_data)
+    confidence = _compute_confidence({**item, 'fetched_profile_text': text})
+
+    update_fields = {
+        'enrichment_status': 'Fetched',
+        'enrichment_error': '',
+        'fetched_headline': headline[:300] if headline else '',
+        'fetched_location': location[:200] if location else '',
+        'fetched_about_excerpt': about[:800] if about else '',
+        'fetched_profile_text': text[:2000],
+        'researched_at': now(),
+        'confidence_score': confidence,
+        'score': scored['score'],
+        'level': scored['level'],
+        'best_role': scored['best_role'],
+        'best_offer_type': scored['best_offer_type'],
+        'reason': scored['reason'],
+        'risk': scored['risk'],
+        'next_action': scored['next_action'],
+    }
+    if name != 'Unknown Candidate' and item.get('name', '') in ('', 'Unknown Candidate'):
+        update_fields['name'] = name
+
+    update_research_queue_item_ext(rid, update_fields)
+    return {'ok': True, 'confidence': confidence, 'score': scored['score']}
+
+
+def batch_enrich_research_candidates(source_id: int = None, limit: int = 20) -> dict:
+    """Enrich all unenriched queue items, optionally filtered by source."""
+    conn = get_db()
+    q = """SELECT id FROM candidate_research_queue
+           WHERE enrichment_status IN ('Not Started', '')
+           AND status NOT IN ('Rejected','Duplicate')"""
+    args = []
+    if source_id is not None:
+        q += " AND candidate_source_id=?"
+        args.append(source_id)
+    q += f" ORDER BY score DESC LIMIT {limit}"
+    ids = [r[0] for r in conn.execute(q, args).fetchall()]
+    conn.close()
+
+    results = {'total': len(ids), 'enriched': 0, 'blocked': 0, 'failed': 0}
+    for rid in ids:
+        r = enrich_research_candidate(rid)
+        if r.get('ok'):
+            results['enriched'] += 1
+        elif r.get('blocked'):
+            results['blocked'] += 1
+        else:
+            results['failed'] += 1
+    return results
+
+
+def mark_needs_manual_review(rid: int, reason: str = ''):
+    """Mark a research queue item as Needs Review."""
+    update_research_queue_item_ext(rid, {
+        'status': 'Needs Review',
+        'enrichment_status': 'Needs Manual Review',
+        'enrichment_error': reason or 'Manual review required',
+        'researched_at': now(),
+    })
+
+
+# ── EXTENDED CRUD (to support new columns) ────────────────────────────────────
+
+def update_candidate_source_ext(sid: int, data: dict):
+    """Update candidate_sources using extended field list."""
+    conn = get_db()
+    sets = []
+    vals = []
+    for f in _CS_FIELDS_EXT:
+        if f in data:
+            sets.append(f"{f}=?")
+            vals.append(data[f])
+    if not sets:
+        conn.close(); return
+    sets.append("updated_at=datetime('now')")
+    vals.append(sid)
+    conn.execute(f"UPDATE candidate_sources SET {', '.join(sets)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def update_research_queue_item_ext(rid: int, data: dict):
+    """Update candidate_research_queue using extended field list."""
+    conn = get_db()
+    sets = []
+    vals = []
+    for f in _RQ_FIELDS_EXT:
+        if f in data:
+            sets.append(f"{f}=?")
+            vals.append(data[f])
+    if not sets:
+        conn.close(); return
+    sets.append("updated_at=datetime('now')")
+    vals.append(rid)
+    conn.execute(f"UPDATE candidate_research_queue SET {', '.join(sets)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def get_research_queue_ext(status=None, mission_id=None, source_id=None,
+                            enrichment_status=None, confidence=None) -> list:
+    """Extended queue query supporting new filter dimensions."""
+    conn = get_db()
+    q = """SELECT rq.*, sm.name as mission_name
+           FROM candidate_research_queue rq
+           LEFT JOIN search_missions sm ON rq.search_mission_id=sm.id
+           WHERE 1=1"""
+    args = []
+    if status:
+        if isinstance(status, list):
+            placeholders = ','.join('?' * len(status))
+            q += f" AND rq.status IN ({placeholders})"
+            args.extend(status)
+        else:
+            q += " AND rq.status=?"
+            args.append(status)
+    if mission_id is not None:
+        q += " AND rq.search_mission_id=?"
+        args.append(mission_id)
+    if source_id is not None:
+        q += " AND rq.candidate_source_id=?"
+        args.append(source_id)
+    if enrichment_status:
+        q += " AND rq.enrichment_status=?"
+        args.append(enrichment_status)
+    if confidence:
+        q += " AND rq.confidence_score=?"
+        args.append(confidence)
+    q += " ORDER BY rq.score DESC, rq.created_at DESC"
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def get_research_summary_ext() -> dict:
+    """Extended summary including link-research counts."""
+    conn = get_db()
+    def _c(q, *a):
+        return conn.execute(q, a).fetchone()[0]
+
+    d = {
+        'total_sources':         _c("SELECT COUNT(*) FROM candidate_sources"),
+        'unprocessed':           _c("SELECT COUNT(*) FROM candidate_sources WHERE processed=0"),
+        'sources_needs_fetch':   _c("SELECT COUNT(*) FROM candidate_sources WHERE fetch_status IN ('Not Fetched','')"),
+        'sources_blocked':       _c("SELECT COUNT(*) FROM candidate_sources WHERE fetch_status IN ('Blocked','Needs Manual Review')"),
+        'queue_total':           _c("SELECT COUNT(*) FROM candidate_research_queue"),
+        'queue_new':             _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='New'"),
+        'queue_needs_review':    _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Needs Review'"),
+        'queue_approved':        _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Approved'"),
+        'queue_rejected':        _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Rejected'"),
+        'queue_duplicate':       _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Duplicate'"),
+        'moved_to_candidates':   _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Moved To Candidates'"),
+        'active_missions':       _c("SELECT COUNT(*) FROM search_missions WHERE status='active'"),
+        'needs_enrichment':      _c("SELECT COUNT(*) FROM candidate_research_queue WHERE enrichment_status IN ('Not Started','') AND status NOT IN ('Rejected','Duplicate')"),
+        'enriched':              _c("SELECT COUNT(*) FROM candidate_research_queue WHERE enrichment_status='Fetched'"),
+        'enrichment_blocked':    _c("SELECT COUNT(*) FROM candidate_research_queue WHERE enrichment_status IN ('Blocked','Needs Manual Review')"),
+        'high_confidence':       _c("SELECT COUNT(*) FROM candidate_research_queue WHERE confidence_score='High'"),
+        'medium_confidence':     _c("SELECT COUNT(*) FROM candidate_research_queue WHERE confidence_score='Medium'"),
+    }
+
+    top = conn.execute(
+        "SELECT * FROM candidate_research_queue WHERE status NOT IN ('Rejected','Duplicate') ORDER BY score DESC LIMIT 1"
+    ).fetchone()
+    d['top_candidate'] = to_dict(top)
+
+    conn.close()
+    return d
+

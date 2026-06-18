@@ -1,0 +1,107 @@
+{% extends "../base.html" %}
+{% block title %}Fetch Google Results — Research Worker{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/research" class="text-slate-400 hover:text-white text-sm">Research</a>
+  <span class="text-slate-600">/</span>
+  <a href="/research/url" class="text-slate-400 hover:text-white text-sm">Add URL Source</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">Fetch Results</h1>
+</div>
+{% end %}
+
+{% block content %}
+
+{% if not source %}
+<div class="bg-red-950 border border-red-800 rounded-xl p-5 text-red-300 text-sm">Source not found. <a href="/research/url" class="underline">Back</a></div>
+{% else %}
+
+{% set is_blocked = get_argument('blocked', '') == '1' if True else False %}
+{% set fetch_status = source.get('fetch_status') or 'Not Fetched' %}
+
+<div class="max-w-2xl space-y-5">
+
+  <!-- Source info card -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+    <div class="flex items-center justify-between mb-3">
+      <p class="text-sm font-semibold text-white">{{ source.get('source_name') or source.get('source_url','') }}</p>
+      <span class="badge
+        {% if fetch_status == 'Fetched' %}bg-green-900 text-green-300
+        {% elif fetch_status in ('Blocked','Needs Manual Review') %}bg-amber-900 text-amber-300
+        {% elif fetch_status == 'Failed' %}bg-red-950 text-red-400
+        {% else %}bg-slate-700 text-slate-400{% end %}">
+        {{ fetch_status }}
+      </span>
+    </div>
+    <p class="text-xs text-slate-500 break-all">{{ source.get('source_url','') }}</p>
+    {% if source.get('fetched_title') %}
+    <p class="text-xs text-slate-400 mt-1">Page title: {{ source['fetched_title'] }}</p>
+    {% end %}
+    {% if source.get('fetch_error') %}
+    <div class="mt-3 bg-amber-950/40 border border-amber-900/40 rounded-lg px-3 py-2 text-xs text-amber-300">
+      ⚠ {{ source['fetch_error'] }}
+    </div>
+    {% end %}
+  </div>
+
+  {% if fetch_status in ('Blocked', 'Needs Manual Review', 'Failed') or is_blocked %}
+  <!-- Blocked / Manual Review instructions -->
+  <div class="bg-amber-950/30 border border-amber-800/40 rounded-xl p-5 space-y-3">
+    <div class="flex items-center gap-2">
+      <span class="text-xl">⚠</span>
+      <p class="text-sm font-semibold text-amber-300">Automatic fetch blocked — manual step required</p>
+    </div>
+    <p class="text-sm text-amber-200">Google blocked this automated request. This is normal — Google rate-limits bots. Here's how to get the results into the system:</p>
+    <ol class="text-sm text-slate-300 space-y-2 list-none">
+      <li class="flex gap-2"><span class="text-indigo-400 font-bold flex-shrink-0">1.</span> <span>Open this URL in your browser: <a href="{{ source.get('source_url','') }}" target="_blank" rel="noopener" class="text-indigo-400 underline break-all">{{ source.get('source_url','')[:80] }}{% if len(source.get('source_url','')) > 80 %}…{% end %}</a></span></li>
+      <li class="flex gap-2"><span class="text-indigo-400 font-bold flex-shrink-0">2.</span> <span>Select all visible result text (Ctrl+A / Cmd+A, then Ctrl+C / Cmd+C).</span></li>
+      <li class="flex gap-2"><span class="text-indigo-400 font-bold flex-shrink-0">3.</span> <span>Go to <a href="/research/url" class="text-indigo-400 underline">Add URL Source</a>, choose <strong class="text-white">Manual Paste</strong>, and paste the copied text.</span></li>
+    </ol>
+    <div class="flex gap-3 pt-2">
+      <a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+        + Manual Paste Source
+      </a>
+      <a href="/research/sources/{{ source['id'] }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+        View Source
+      </a>
+    </div>
+  </div>
+
+  {% elif fetch_status == 'Not Fetched' %}
+  <!-- Ready to fetch -->
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+    <p class="text-sm text-slate-300">Ready to fetch this Google search URL and extract LinkedIn profile URLs from the results.</p>
+    <div class="bg-indigo-950/30 border border-indigo-900/30 rounded-lg px-4 py-3 text-xs text-indigo-300 space-y-1">
+      <p>If Google blocks the fetch, we'll show you manual paste instructions instead.</p>
+      <p>If it works, we'll extract LinkedIn URLs and add candidates to the review queue automatically.</p>
+    </div>
+    <form method="POST" action="/research/url/process">
+      <input type="hidden" name="sid" value="{{ source['id'] }}"/>
+      <button type="submit"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
+        🔍 Fetch &amp; Extract Now
+      </button>
+    </form>
+  </div>
+
+  {% elif fetch_status == 'Fetched' %}
+  <!-- Success -->
+  <div class="bg-green-950/30 border border-green-800/30 rounded-xl p-5 space-y-3">
+    <p class="text-sm font-semibold text-green-300">✓ Fetch successful</p>
+    {% if source.get('fetched_html_excerpt') %}
+    <pre class="text-xs text-slate-400 bg-slate-900 rounded-lg p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ source['fetched_html_excerpt'][:800] }}</pre>
+    {% end %}
+    <div class="flex gap-3 pt-1">
+      <a href="/research/sources/{{ source['id'] }}" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">View Source →</a>
+      <a href="/research/queue" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Review Queue →</a>
+    </div>
+  </div>
+
+  {% end %}
+
+  <a href="/research/sources" class="block text-center text-sm text-slate-500 hover:text-slate-300 transition-colors">← All Sources</a>
+</div>
+
+{% end %}
+{% end %}

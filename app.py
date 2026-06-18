@@ -1018,6 +1018,184 @@ class ResearchQueriesHandler(Base):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Link Research Worker — handlers
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ResearchUrlHandler(Base):
+    """GET /research/url — URL source creation form (4 modes)."""
+    def get(self):
+        missions = db.get_search_missions()
+        self.render("research/url.html",
+                    missions=missions,
+                    safety_notice=_SAFETY_NOTICE,
+                    page='research')
+
+    def post(self):
+        source_mode = self.get_argument('source_mode', 'Manual Paste')
+        mission_id  = self.get_argument('search_mission_id', None) or None
+        if mission_id:
+            mission_id = int(mission_id)
+
+        if source_mode == 'Google Search URL':
+            url = self.get_argument('source_url', '').strip()
+            if not url:
+                self.redirect('/research/url')
+                return
+            sid = db.create_candidate_source({
+                'source_type': 'google_search_url',
+                'source_name': self.get_argument('source_name', '') or url[:80],
+                'search_mission_id': mission_id,
+                'source_url': url,
+                'raw_text': '',
+                'title': self.get_argument('source_name', '') or url[:80],
+                'source_mode': source_mode,
+                'fetch_status': 'Not Fetched',
+            })
+            self.redirect(f'/research/url/process?sid={sid}')
+
+        elif source_mode == 'Direct Profile URL':
+            url = self.get_argument('source_url', '').strip()
+            if not url:
+                self.redirect('/research/url')
+                return
+            sid = db.create_source_from_url(url, source_mode=source_mode, mission_id=mission_id,
+                                             title=self.get_argument('source_name', ''))
+            # Create a single queue item from the slug
+            db.extract_candidates_from_source(sid)
+            # Attempt enrichment
+            items = db.get_research_queue(source_id=sid)
+            if items:
+                db.enrich_research_candidate(items[0]['id'])
+            self.redirect(f'/research/sources/{sid}')
+
+        elif source_mode == 'Batch URLs':
+            raw_urls = self.get_argument('raw_text', '')
+            urls = [u.strip() for u in raw_urls.splitlines() if u.strip()]
+            if not urls:
+                self.redirect('/research/url')
+                return
+            batch_name = self.get_argument('source_name', '') or f'Batch {len(urls)} URLs'
+            sid = db.create_candidate_source({
+                'source_type': 'batch_urls',
+                'source_name': batch_name,
+                'search_mission_id': mission_id,
+                'source_url': '',
+                'raw_text': '\n'.join(urls),
+                'title': batch_name,
+                'source_mode': source_mode,
+                'fetch_status': 'Not Fetched',
+            })
+            # Extract from the pasted URL list (creates one item per URL)
+            db.extract_candidates_from_source(sid)
+            # Kick off batch enrichment in the same request
+            db.batch_enrich_research_candidates(source_id=sid, limit=50)
+            self.redirect(f'/research/sources/{sid}')
+
+        else:
+            # Manual Paste — same as old sources/new
+            sid = db.create_candidate_source({
+                'source_type': self.get_argument('source_type', 'manual_paste'),
+                'source_name': self.get_argument('source_name', ''),
+                'search_mission_id': mission_id,
+                'source_url': self.get_argument('source_url', ''),
+                'raw_text': self.get_argument('raw_text', ''),
+                'source_mode': source_mode,
+                'fetch_status': 'Not Fetched',
+            })
+            self.redirect(f'/research/sources/{sid}')
+
+
+class ResearchUrlProcessHandler(Base):
+    """GET+POST /research/url/process?sid=X — fetch & process a Google search URL source."""
+    def get(self):
+        sid = int(self.get_argument('sid', 0))
+        source = db.get_candidate_source(sid) if sid else None
+        self.render("research/url_process.html",
+                    source=source, sid=sid,
+                    safety_notice=_SAFETY_NOTICE,
+                    page='research')
+
+    def post(self):
+        sid = int(self.get_argument('sid', 0))
+        if not sid:
+            self.redirect('/research/url')
+            return
+        result = db.process_google_search_url(sid)
+        # Pass result via query string flag; the GET template reads the source for details
+        if result.get('blocked') or result.get('manual_review_needed'):
+            self.redirect(f'/research/url/process?sid={sid}&blocked=1')
+        else:
+            self.redirect(f'/research/sources/{sid}')
+
+
+class ResearchQueueEnrichHandler(Base):
+    """POST /research/queue/{id}/enrich — attempt public data enrichment."""
+    def post(self, rid):
+        result = db.enrich_research_candidate(int(rid))
+        self.redirect(f'/research/queue/{rid}')
+
+
+class ResearchQueueManualReviewHandler(Base):
+    """POST /research/queue/{id}/manual-review — mark as Needs Review."""
+    def post(self, rid):
+        reason = self.get_argument('reason', 'Manually flagged for review')
+        db.mark_needs_manual_review(int(rid), reason)
+        self.redirect(f'/research/queue/{rid}')
+
+
+class ResearchQueueRefreshHandler(Base):
+    """POST /research/queue/{id}/refresh-public-data — re-run enrichment."""
+    def post(self, rid):
+        # Reset enrichment status so enrich runs fresh
+        db.update_research_queue_item_ext(int(rid), {'enrichment_status': 'Not Started'})
+        db.enrich_research_candidate(int(rid))
+        self.redirect(f'/research/queue/{rid}')
+
+
+class ResearchQueueListHandler(Base):
+    """Updated list handler — supports enrichment_status and confidence filters."""
+    def get(self):
+        status_filter      = self.get_argument('status', '')
+        enrich_filter      = self.get_argument('enrichment', '')
+        confidence_filter  = self.get_argument('confidence', '')
+        items = db.get_research_queue_ext(
+            status=status_filter if status_filter else None,
+            enrichment_status=enrich_filter if enrich_filter else None,
+            confidence=confidence_filter if confidence_filter else None,
+        )
+        counts = {
+            'new':           len(db.get_research_queue(status='New')),
+            'needs_review':  len(db.get_research_queue(status='Needs Review')),
+            'approved':      len(db.get_research_queue(status='Approved')),
+            'rejected':      len(db.get_research_queue(status='Rejected')),
+            'moved':         len(db.get_research_queue(status='Moved To Candidates')),
+            'duplicate':     len(db.get_research_queue(status='Duplicate')),
+        }
+        self.render("research/queue/list.html",
+                    items=items, counts=counts,
+                    status_filter=status_filter,
+                    enrich_filter=enrich_filter,
+                    confidence_filter=confidence_filter,
+                    safety_notice=_SAFETY_NOTICE, page='research')
+
+
+class ResearchQueueDetailHandler(Base):
+    """Updated detail handler — includes enrichment data."""
+    def get(self, rid):
+        item = db.get_research_queue_item(int(rid))
+        if not item:
+            self.send_error(404); return
+        self.render("research/queue/detail.html",
+                    item=item, safety_notice=_SAFETY_NOTICE, page='research')
+
+    def post(self, rid):
+        notes = self.get_argument('notes', None)
+        if notes is not None:
+            db.update_research_queue_item(int(rid), {'notes': notes})
+        self.redirect(f'/research/queue/{rid}')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # App factory
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1027,6 +1205,7 @@ def make_app():
     db.init_agents_tables()
     db.init_research_tables()
     db.init_action_tasks_table()
+    db.migrate_phase3()   # must come after init_research_tables
     # Derive cookie secret from password (or use env override); never empty
     _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
     cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
@@ -1104,6 +1283,8 @@ def make_app():
         (r"/tasks/([0-9]+)/reschedule",                         TaskRescheduleHandler),
         # Research Worker
         (r"/research",                                          ResearchDashboardHandler),
+        (r"/research/url",                                      ResearchUrlHandler),
+        (r"/research/url/process",                              ResearchUrlProcessHandler),
         (r"/research/sources",                                  ResearchSourceListHandler),
         (r"/research/sources/new",                              ResearchSourceNewHandler),
         (r"/research/sources/([0-9]+)",                         ResearchSourceDetailHandler),
@@ -1113,6 +1294,9 @@ def make_app():
         (r"/research/queue/([0-9]+)/approve",                   ResearchQueueApproveHandler),
         (r"/research/queue/([0-9]+)/reject",                    ResearchQueueRejectHandler),
         (r"/research/queue/([0-9]+)/move-to-candidates",        ResearchQueueMoveHandler),
+        (r"/research/queue/([0-9]+)/enrich",                    ResearchQueueEnrichHandler),
+        (r"/research/queue/([0-9]+)/manual-review",             ResearchQueueManualReviewHandler),
+        (r"/research/queue/([0-9]+)/refresh-public-data",       ResearchQueueRefreshHandler),
         (r"/research/queries",                                  ResearchQueriesHandler),
     ], **settings)
 

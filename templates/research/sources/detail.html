@@ -35,17 +35,25 @@
     <!-- Meta -->
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
       <div class="flex flex-wrap items-center gap-2 mb-3">
-        <span class="badge bg-slate-700 text-slate-300">{{ source['source_type'] }}</span>
+        <span class="badge bg-slate-700 text-slate-300">{{ source.get('source_mode') or source['source_type'] }}</span>
         {% if source['processed'] %}
         <span class="badge bg-green-900 text-green-300">processed</span>
         {% else %}
         <span class="badge bg-amber-900 text-amber-300">unprocessed</span>
+        {% end %}
+        {% set fs = source.get('fetch_status') or '' %}
+        {% if fs == 'Fetched' %}<span class="badge bg-teal-900 text-teal-300">✓ Fetched</span>
+        {% elif fs in ('Blocked','Needs Manual Review') %}<span class="badge bg-amber-900 text-amber-300">⚠ Blocked</span>
+        {% elif fs == 'Failed' %}<span class="badge bg-red-950 text-red-400">Failed</span>
         {% end %}
         {% if source['mission_name'] %}
         <span class="badge bg-indigo-900 text-indigo-300">{{ source['mission_name'] }}</span>
         {% end %}
         <span class="text-xs text-slate-500 ml-auto">{{ source['created_at'][:16] if source['created_at'] else '' }}</span>
       </div>
+      {% if source.get('fetch_error') %}
+      <div class="mb-3 bg-amber-950/30 border border-amber-900/30 rounded-lg px-3 py-2 text-xs text-amber-300">⚠ {{ source['fetch_error'] }}</div>
+      {% end %}
       {% if source['source_url'] %}
       <p class="text-xs text-slate-500 mb-3">URL: <a href="{{ source['source_url'] }}" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 break-all">{{ source['source_url'] }}</a></p>
       {% end %}
@@ -80,10 +88,15 @@
                 {{ item['level'] }} · {{ item['score'] }}
               </span>
               <span class="badge bg-slate-700 text-slate-300">{{ item['status'] }}</span>
+              {% if item.get('enrichment_status') == 'Fetched' %}<span class="badge bg-teal-900 text-teal-300 text-xs">✓ Enriched</span>
+              {% elif item.get('enrichment_status') in ('Blocked','Needs Manual Review') %}<span class="badge bg-amber-900 text-amber-300 text-xs">⚠ Blocked</span>
+              {% end %}
+              {% if item.get('confidence_score') == 'High' %}<span class="text-xs text-green-400">● High</span>{% end %}
             </div>
             {% if item['detected_role'] %}
             <p class="text-xs text-indigo-400">{{ item['detected_role'] }}</p>
             {% end %}
+            {% if item.get('fetched_headline') %}<p class="text-xs text-teal-400">{{ item['fetched_headline'][:80] }}</p>{% end %}
             {% if item['possible_profile_url'] %}
             <a href="{{ item['possible_profile_url'] }}" target="_blank" rel="noopener"
                class="text-xs text-slate-500 hover:text-indigo-400 truncate block">
