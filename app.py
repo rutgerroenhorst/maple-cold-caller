@@ -784,6 +784,111 @@ class DailyDashboardHandler(Base):
 # ──────────────────────────────────────────────────────────────────────────────
 # Research Worker Handlers
 # ──────────────────────────────────────────────────────────────────────────────
+# Action Queue Handlers
+# ──────────────────────────────────────────────────────────────────────────────
+
+_MANUAL_SAFE_NOTICE = (
+    "All messages must be copied and sent manually. "
+    "This app never auto-sends anything. Use 'Copy Message', send it yourself, then click 'Mark Sent'."
+)
+
+
+class TaskListHandler(Base):
+    def get(self):
+        status_filter   = self.get_argument('status', '')
+        priority_filter = self.get_argument('priority', '')
+        type_filter     = self.get_argument('type', '')
+        related_filter  = self.get_argument('related', '')
+
+        items = db.get_action_tasks(
+            status=status_filter or None,
+            priority=priority_filter or None,
+            task_type=type_filter or None,
+            related_type=related_filter or None,
+        )
+        summary = db.get_action_task_summary()
+        overdue = db.get_overdue_tasks()
+        due_today = db.get_due_tasks()
+
+        self.render("tasks/list.html",
+                    items=items, summary=summary,
+                    overdue=overdue, due_today=due_today,
+                    status_filter=status_filter,
+                    priority_filter=priority_filter,
+                    type_filter=type_filter,
+                    related_filter=related_filter,
+                    manual_safe_notice=_MANUAL_SAFE_NOTICE,
+                    page='tasks')
+
+
+class TaskDetailHandler(Base):
+    def get(self, tid):
+        task = db.get_action_task(int(tid))
+        if not task:
+            self.send_error(404); return
+        self.render("tasks/detail.html",
+                    task=task,
+                    manual_safe_notice=_MANUAL_SAFE_NOTICE,
+                    page='tasks')
+
+    def post(self, tid):
+        notes = self.get_argument('notes', None)
+        if notes is not None:
+            db.update_action_task(int(tid), {'notes': notes})
+        self.redirect(f'/tasks/{tid}')
+
+
+class TaskEditHandler(Base):
+    def get(self, tid):
+        task = db.get_action_task(int(tid))
+        if not task:
+            self.send_error(404); return
+        self.render("tasks/edit.html", task=task, page='tasks')
+
+    def post(self, tid):
+        data = {}
+        for f in ['title', 'description', 'message', 'priority', 'due_date', 'notes', 'owner']:
+            val = self.get_argument(f, None)
+            if val is not None:
+                data[f] = val
+        db.update_action_task(int(tid), data)
+        self.redirect(f'/tasks/{tid}')
+
+
+class TaskCopyHandler(Base):
+    def post(self, tid):
+        db.mark_task_copied(int(tid))
+        self.redirect(f'/tasks/{tid}')
+
+
+class TaskMarkSentHandler(Base):
+    def post(self, tid):
+        db.mark_task_sent(int(tid))
+        self.redirect(f'/tasks/{tid}')
+
+
+class TaskCompleteHandler(Base):
+    def post(self, tid):
+        db.complete_action_task(int(tid))
+        self.redirect('/tasks')
+
+
+class TaskRejectHandler(Base):
+    def post(self, tid):
+        db.reject_action_task(int(tid))
+        self.redirect('/tasks')
+
+
+class TaskRescheduleHandler(Base):
+    def post(self, tid):
+        new_due = self.get_argument('due_date', '')
+        notes   = self.get_argument('notes', '')
+        if new_due:
+            db.reschedule_action_task(int(tid), new_due, notes)
+        self.redirect(f'/tasks/{tid}')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 _SAFETY_NOTICE = (
     "This worker does not send LinkedIn messages, connection requests, comments or likes. "
@@ -921,6 +1026,7 @@ def make_app():
     db.migrate_phase2()
     db.init_agents_tables()
     db.init_research_tables()
+    db.init_action_tasks_table()
     # Derive cookie secret from password (or use env override); never empty
     _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
     cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
@@ -987,6 +1093,15 @@ def make_app():
         (r"/search-missions/([0-9]+)/pause",    SearchMissionPauseHandler),
         (r"/observer",                          ObserverHandler),
         (r"/observer/([0-9]+)/resolve",         ObserverResolveHandler),
+        # Action Queue
+        (r"/tasks",                                             TaskListHandler),
+        (r"/tasks/([0-9]+)",                                    TaskDetailHandler),
+        (r"/tasks/([0-9]+)/edit",                               TaskEditHandler),
+        (r"/tasks/([0-9]+)/copy",                               TaskCopyHandler),
+        (r"/tasks/([0-9]+)/mark-sent",                          TaskMarkSentHandler),
+        (r"/tasks/([0-9]+)/complete",                           TaskCompleteHandler),
+        (r"/tasks/([0-9]+)/reject",                             TaskRejectHandler),
+        (r"/tasks/([0-9]+)/reschedule",                         TaskRescheduleHandler),
         # Research Worker
         (r"/research",                                          ResearchDashboardHandler),
         (r"/research/sources",                                  ResearchSourceListHandler),

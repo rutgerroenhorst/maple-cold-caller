@@ -27,6 +27,12 @@ def now():
     return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
 
+def _table_exists(conn, name: str) -> bool:
+    return conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()[0] > 0
+
+
 def init_db():
     conn = get_db()
     c = conn.cursor()
@@ -1158,37 +1164,64 @@ def run_agent(agent_id: int):
                     recommendation = actions[0]
 
         elif atype == 'follow_up':
-            from datetime import datetime as _dt
-            today = _dt.utcnow().strftime('%Y-%m-%d')
-            due = to_list(conn.execute(
-                """SELECT oq.next_follow_up_date, oq.outreach_status, ca.full_name
-                   FROM outreach_queue oq
-                   LEFT JOIN cold_caller_candidates ca ON oq.candidate_id=ca.id
-                   WHERE oq.outreach_status NOT IN ('closed','booked')
-                     AND (oq.next_follow_up_date <= ? OR oq.next_follow_up_date IS NULL
-                          OR oq.next_follow_up_date='')
-                   LIMIT 10""", (today,)).fetchall())
-            interviews = to_list(conn.execute(
+            from datetime import datetime as _dtf
+            today_str = _dtf.utcnow().strftime('%Y-%m-%d')
+            # Action Queue overdue tasks
+            overdue_tasks = to_list(conn.execute(
+                """SELECT id, title, priority, task_type, related_name
+                   FROM (
+                     SELECT at.id, at.title, at.priority, at.task_type,
+                            CASE at.related_type
+                              WHEN 'candidate' THEN (SELECT full_name FROM cold_caller_candidates WHERE id=at.related_id)
+                              ELSE NULL
+                            END as related_name
+                     FROM action_tasks at
+                     WHERE at.due_date < ? AND at.status NOT IN ('Completed','Rejected')
+                   ) ORDER BY CASE priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END
+                   LIMIT 10""", (today_str,)).fetchall())
+            due_today_tasks = to_list(conn.execute(
+                """SELECT id, title, priority, task_type FROM action_tasks
+                   WHERE due_date=? AND status NOT IN ('Completed','Rejected')
+                   LIMIT 10""", (today_str,)).fetchall())
+            # Outreach overdue
+            due_outreach = conn.execute(
+                """SELECT COUNT(*) FROM outreach_queue
+                   WHERE outreach_status NOT IN ('closed','booked')
+                     AND (next_follow_up_date <= ? OR next_follow_up_date IS NULL OR next_follow_up_date='')""",
+                (today_str,)).fetchone()[0]
+            interviews_today = to_list(conn.execute(
                 """SELECT iq.interview_time, ca.full_name
                    FROM interview_queue iq
                    LEFT JOIN cold_caller_candidates ca ON iq.candidate_id=ca.id
-                   WHERE iq.interview_date=? AND iq.status='scheduled'""", (today,)).fetchall())
-            if due:
-                output = f"{len(due)} outreach item(s) need follow-up:\n"
-                for o in due[:5]:
-                    output += f"  ▸ {o.get('full_name','?')} — {o.get('outreach_status','?')} — due: {o.get('next_follow_up_date','—')}\n"
-                issue = f"{len(due)} overdue follow-ups"
-                recommendation = f"Send follow-up messages to {len(due)} overdue candidate(s)"
+                   WHERE iq.interview_date=? AND iq.status='scheduled'""", (today_str,)).fetchall())
+
+            output = f"Follow-up Agent — {today_str}\n\n"
+            output += f"Action Queue: {len(overdue_tasks)} overdue | {len(due_today_tasks)} due today\n"
+            output += f"Outreach overdue: {due_outreach}\n"
+            output += f"Interviews today: {len(interviews_today)}\n\n"
+            if overdue_tasks:
+                output += "Overdue tasks (top priority):\n"
+                for t in overdue_tasks[:5]:
+                    rn = t.get('related_name') or ''
+                    output += f"  ▸ [{t['priority']}] {t['title']}" + (f" — {rn}" if rn else "") + "\n"
+                issue = f"{len(overdue_tasks)} overdue action task(s)"
+                recommendation = f"Open /tasks and action the {len(overdue_tasks)} overdue item(s)"
+            elif due_today_tasks:
+                output += "Due today:\n"
+                for t in due_today_tasks[:5]:
+                    output += f"  ▸ [{t['priority']}] {t['title']}\n"
+                issue = ""
+                recommendation = "Complete today's action tasks at /tasks"
+            elif due_outreach > 0:
+                issue = f"{due_outreach} overdue outreach follow-up(s)"
+                recommendation = "Go to /outreach and send follow-up messages"
             else:
-                output = "No overdue outreach items.\n"
-            if interviews:
-                output += f"\n{len(interviews)} interview(s) scheduled today:\n"
-                for i in interviews:
+                issue = ""
+                recommendation = "No overdue items — keep sourcing and stay consistent"
+            if interviews_today:
+                output += "\nInterviews today:\n"
+                for i in interviews_today:
                     output += f"  ▸ {i.get('full_name','?')} at {i.get('interview_time','TBD')}\n"
-            else:
-                output += "No interviews today."
-            if not due and not interviews:
-                recommendation = "Pipeline clear — keep sourcing new candidates."
 
         elif atype == 'performance':
             def _n(q):
@@ -1233,10 +1266,36 @@ def run_agent(agent_id: int):
                 "AND (next_follow_up_date <= date('now') OR next_follow_up_date IS NULL "
                 "OR next_follow_up_date='')")
 
+            # Also check action tasks
+            noverdue_tasks = conn.execute(
+                "SELECT COUNT(*) FROM action_tasks WHERE due_date < date('now') AND status NOT IN ('Completed','Rejected')"
+            ).fetchone()[0] if _table_exists(conn, 'action_tasks') else 0
+            napproved_stuck = conn.execute(
+                "SELECT COUNT(*) FROM candidate_research_queue WHERE status='Approved'"
+            ).fetchone()[0] if _table_exists(conn, 'candidate_research_queue') else 0
+            nno_action = conn.execute(
+                "SELECT COUNT(*) FROM cold_caller_candidates c WHERE c.status='found' AND NOT EXISTS (SELECT 1 FROM action_tasks WHERE related_type='candidate' AND related_id=c.id AND status NOT IN ('Completed','Rejected'))"
+            ).fetchone()[0] if _table_exists(conn, 'action_tasks') else 0
+
             if nc == 0:
                 bot, impact = "No candidates in pipeline", "Critical"
                 rec = "Add at least 5 candidates before any other work"
-                fix = "Go to /candidates/new or run a search mission and paste profiles"
+                fix = "Go to /research and paste source text to find candidates"
+            elif noverdue_tasks > 0:
+                bot = f"{noverdue_tasks} overdue action task(s)"
+                impact = "High"
+                rec = f"Action {noverdue_tasks} overdue task(s) before candidates go cold"
+                fix = "Go to /tasks and complete overdue items"
+            elif napproved_stuck > 0:
+                bot = f"{napproved_stuck} approved research candidate(s) not moved to pipeline"
+                impact = "High"
+                rec = "Move approved research candidates to the main pipeline"
+                fix = "Go to /research/queue?status=Approved and move each candidate"
+            elif nno_action > 0:
+                bot = f"{nno_action} pipeline candidate(s) with no pending action task"
+                impact = "Medium"
+                rec = "Create screening tasks for candidates without any follow-up planned"
+                fix = "Go to /tasks and create a screening task for each new candidate"
             elif ncamp == 0:
                 bot, impact = "No active campaigns", "High"
                 rec = "Create a campaign to enable candidate matching"
@@ -1246,14 +1305,14 @@ def run_agent(agent_id: int):
                 rec = "Create a search mission to direct the Candidate Research Worker"
                 fix = "Go to /search-missions/new"
             elif ndue > 0:
-                bot = f"{ndue} overdue follow-up(s)"
+                bot = f"{ndue} overdue outreach follow-up(s)"
                 impact = "Medium"
-                rec = f"Action {ndue} overdue follow-up(s) before candidates go cold"
+                rec = f"Send follow-up messages to {ndue} overdue candidate(s)"
                 fix = "Go to /outreach and follow up with overdue items"
             elif nout == 0 and nc > 0:
                 bot, impact = "No outreach initiated", "Medium"
                 rec = "Start outreach on your top candidates"
-                fix = "Go to /candidates → pick top scored → Add Outreach → Generate with AI"
+                fix = "Go to /candidates → pick top scored → Add Outreach"
             elif nint == 0 and nc > 2:
                 bot, impact = "No interviews scheduled", "Low"
                 rec = "Schedule an interview with your most qualified candidate"
@@ -1888,6 +1947,23 @@ def update_research_queue_item(rid: int, data: dict):
 
 def approve_research_candidate(rid: int):
     update_research_queue_item(rid, {'status': 'Approved'})
+    # Auto-create "Move To Candidates" task
+    try:
+        item = get_research_queue_item(rid)
+        if item:
+            create_action_task({
+                'task_type':    'move_to_candidates',
+                'related_type': 'research_item',
+                'related_id':   rid,
+                'title':        f"Move to candidates: {item.get('name','?')}",
+                'description':  f"Approved research candidate ready to move to pipeline.",
+                'message':      _task_message('move_to_candidates', name=item.get('name','?')),
+                'priority':     'High',
+                'status':       'Pending',
+                'due_date':     _today(),
+            })
+    except Exception:
+        pass
 
 
 def reject_research_candidate(rid: int):
@@ -1989,6 +2065,11 @@ def move_research_candidate_to_candidates(rid: int) -> int:
         'status': 'Moved To Candidates',
         'linked_candidate_id': cid,
     })
+    # Auto-create screening task for Action Queue
+    try:
+        create_candidate_next_action_task(cid, task_type='screening_message', priority='High')
+    except Exception:
+        pass
     return cid
 
 
@@ -2100,5 +2181,411 @@ def get_research_summary() -> dict:
     ).fetchone()
     d['top_candidate'] = to_dict(top)
 
+    conn.close()
+    return d
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Action Queue + Follow-up Engine
+# ──────────────────────────────────────────────────────────────────────────────
+
+from datetime import datetime as _dt, timedelta as _td
+
+# ── MESSAGE TEMPLATES ──────────────────────────────────────────────────────────
+
+_TASK_MESSAGES = {
+    'screening_message': (
+        "Yo {name}, nice dat je interesse hebt. "
+        "Korte check voordat we iets plannen:\n\n"
+        "1. Heb je ervaring met cold calling of appointment setting?\n"
+        "2. Spreek je vloeiend Nederlands?\n"
+        "3. Hoeveel uur per week kun je bellen?\n"
+        "4. Ben je comfortabel met commissie?\n"
+        "5. Kun je een voice note sturen van 60 sec "
+        "waarin je jezelf kort verkoopt als cold caller?\n\n"
+        "Laat het me weten!"
+    ),
+    'voice_note_request': (
+        "Hey {name}, bedankt voor je reactie! "
+        "Om verder te gaan zou ik graag een voice note van je willen horen — "
+        "60 seconden in het Nederlands, pitch jezelf als cold caller. "
+        "Gewoon relaxed, geen voorbereiding nodig. Stuur hem als je even tijd hebt!"
+    ),
+    'test_call_invite': (
+        "Hey {name}, we'd like to do a quick 15-minute test call this week. "
+        "We'll do a short cold calling simulation together. "
+        "Does {date} work? If not, what days are you free this week?"
+    ),
+    'follow_up_1': (
+        "Hey {name}, just checking in! "
+        "Did you get a chance to look at my last message? "
+        "We're still looking for a Dutch-speaking cold caller "
+        "and you looked like a strong fit. Still interested?"
+    ),
+    'follow_up_2': (
+        "Hey {name}, last follow-up from me! "
+        "We have one spot left for a Dutch cold caller "
+        "and I wanted to give you first shot. "
+        "If this isn't a good time — no worries, just reply NO "
+        "and I'll close your application. Otherwise reply YES and I'll send details!"
+    ),
+    'rejection': (
+        "Hi {name}, thanks for your time and interest! "
+        "After careful consideration we've decided to move forward with other candidates for now. "
+        "I'll keep your profile and reach out again if a better match comes up. "
+        "Best of luck!"
+    ),
+    'nurture': (
+        "Hey {name}, how are you? "
+        "We spoke a while back about a cold calling role. "
+        "We have some new campaigns starting and thought of you. "
+        "Available for a quick chat this week?"
+    ),
+    'interview_reminder': (
+        "Reminder: Interview with {name} today. "
+        "Review their profile and test-call criteria before the call."
+    ),
+    'match_to_offer': (
+        "Review {name} and match them to the best active campaign. "
+        "Check their score, role fit and offer type, then assign via /matches."
+    ),
+    'decision': (
+        "Post-interview decision needed for {name}. "
+        "Review notes and mark: Qualified / Rejected / Needs Another Call."
+    ),
+    'move_to_candidates': (
+        "Research candidate {name} is approved. "
+        "Move them to the main candidates pipeline via /research/queue."
+    ),
+}
+
+
+def _task_message(task_type: str, name: str = '', date: str = '') -> str:
+    tmpl = _TASK_MESSAGES.get(task_type, '')
+    return tmpl.format(name=name, date=date or 'this week')
+
+
+def _future_date(days: int) -> str:
+    return (_dt.utcnow() + _td(days=days)).strftime('%Y-%m-%d')
+
+
+def _today() -> str:
+    return _dt.utcnow().strftime('%Y-%m-%d')
+
+
+# ── TABLE INIT ─────────────────────────────────────────────────────────────────
+
+def init_action_tasks_table():
+    """Create action_tasks table. Idempotent."""
+    conn = get_db()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS action_tasks (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_type       TEXT NOT NULL DEFAULT 'general',
+        related_type    TEXT,
+        related_id      INTEGER,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        message         TEXT,
+        priority        TEXT DEFAULT 'Medium',
+        status          TEXT DEFAULT 'Pending',
+        owner           TEXT,
+        due_date        TEXT,
+        completed_at    TEXT,
+        notes           TEXT,
+        created_at      TEXT DEFAULT (datetime('now')),
+        updated_at      TEXT DEFAULT (datetime('now'))
+    );
+    """)
+    conn.commit()
+    conn.close()
+
+
+# ── CRUD ────────────────────────────────────────────────────────────────────────
+
+_AT_FIELDS = [
+    'task_type', 'related_type', 'related_id', 'title', 'description',
+    'message', 'priority', 'status', 'owner', 'due_date',
+    'completed_at', 'notes',
+]
+
+
+def create_action_task(data: dict) -> int:
+    conn = get_db()
+    cols = [f for f in _AT_FIELDS if f in data]
+    ph   = ','.join('?' * len(cols))
+    vals = [data[c] for c in cols]
+    cur  = conn.execute(
+        f"INSERT INTO action_tasks ({', '.join(cols)}) VALUES ({ph})", vals
+    )
+    conn.commit()
+    tid = cur.lastrowid
+    conn.close()
+    return tid
+
+
+def get_action_tasks(status=None, priority=None, task_type=None,
+                     related_type=None, overdue_only=False,
+                     due_today=False, limit=200) -> list:
+    conn = get_db()
+    q = """
+        SELECT at.*,
+               CASE at.related_type
+                 WHEN 'candidate'     THEN (SELECT full_name FROM cold_caller_candidates WHERE id=at.related_id)
+                 WHEN 'research_item' THEN (SELECT name FROM candidate_research_queue WHERE id=at.related_id)
+                 WHEN 'outreach'      THEN (SELECT full_name FROM cold_caller_candidates c
+                                            JOIN outreach_queue oq ON oq.candidate_id=c.id
+                                            WHERE oq.id=at.related_id LIMIT 1)
+                 WHEN 'interview'     THEN (SELECT full_name FROM cold_caller_candidates c
+                                            JOIN interview_queue iq ON iq.candidate_id=c.id
+                                            WHERE iq.id=at.related_id LIMIT 1)
+                 ELSE NULL
+               END as related_name
+        FROM action_tasks at
+        WHERE 1=1
+    """
+    args = []
+    if status:
+        if isinstance(status, list):
+            q += f" AND at.status IN ({','.join('?'*len(status))})"
+            args.extend(status)
+        else:
+            q += " AND at.status=?"; args.append(status)
+    if priority:
+        q += " AND at.priority=?"; args.append(priority)
+    if task_type:
+        q += " AND at.task_type=?"; args.append(task_type)
+    if related_type:
+        q += " AND at.related_type=?"; args.append(related_type)
+    if overdue_only:
+        q += " AND at.due_date < date('now') AND at.status NOT IN ('Completed','Rejected')"
+    if due_today:
+        q += " AND at.due_date = date('now') AND at.status NOT IN ('Completed','Rejected')"
+    q += " ORDER BY CASE at.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, at.due_date ASC LIMIT ?"
+    args.append(limit)
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def get_action_task(tid: int) -> dict:
+    conn = get_db()
+    row = conn.execute("""
+        SELECT at.*,
+               CASE at.related_type
+                 WHEN 'candidate'     THEN (SELECT full_name FROM cold_caller_candidates WHERE id=at.related_id)
+                 WHEN 'research_item' THEN (SELECT name FROM candidate_research_queue WHERE id=at.related_id)
+                 ELSE NULL
+               END as related_name
+        FROM action_tasks at WHERE at.id=?
+    """, (tid,)).fetchone()
+    conn.close()
+    return to_dict(row)
+
+
+def update_action_task(tid: int, data: dict):
+    conn = get_db()
+    updatable = _AT_FIELDS
+    sets = [f"{f}=?" for f in updatable if f in data]
+    vals = [data[f] for f in updatable if f in data]
+    if not sets:
+        conn.close(); return
+    sets.append("updated_at=datetime('now')")
+    vals.append(tid)
+    conn.execute(f"UPDATE action_tasks SET {', '.join(sets)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def complete_action_task(tid: int):
+    update_action_task(tid, {
+        'status': 'Completed',
+        'completed_at': _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+    })
+
+
+def mark_task_copied(tid: int):
+    """Mark message as copied — user now has the text to send manually."""
+    update_action_task(tid, {'status': 'Copied'})
+
+
+def mark_task_sent(tid: int) -> int:
+    """
+    Mark task Sent. For outreach-type tasks, auto-create the appropriate follow-up.
+    Returns follow-up task id or None.
+    """
+    task = get_action_task(tid)
+    if not task:
+        return None
+
+    update_action_task(tid, {'status': 'Sent'})
+
+    task_type   = task.get('task_type', '')
+    related_id  = task.get('related_id')
+    related_type= task.get('related_type', '')
+    name        = task.get('related_name') or 'the candidate'
+
+    follow_up_tid = None
+
+    if task_type == 'screening_message':
+        follow_up_tid = create_action_task({
+            'task_type':    'follow_up_1',
+            'related_type': related_type,
+            'related_id':   related_id,
+            'title':        f"Follow-up: {name}",
+            'description':  'No response to screening message — send follow-up.',
+            'message':      _task_message('follow_up_1', name=name),
+            'priority':     'Medium',
+            'status':       'Pending',
+            'due_date':     _future_date(2),
+        })
+
+    elif task_type in ('voice_note_request', 'follow_up_1'):
+        follow_up_tid = create_action_task({
+            'task_type':    'follow_up_2',
+            'related_type': related_type,
+            'related_id':   related_id,
+            'title':        f"Follow-up 2: {name}",
+            'description':  'Second follow-up — last attempt before archiving.',
+            'message':      _task_message('follow_up_2', name=name),
+            'priority':     'Medium',
+            'status':       'Pending',
+            'due_date':     _future_date(2),
+        })
+
+    elif task_type == 'follow_up_2':
+        # Last follow-up — create a nurture/decision task in 3 days
+        follow_up_tid = create_action_task({
+            'task_type':    'nurture',
+            'related_type': related_type,
+            'related_id':   related_id,
+            'title':        f"Nurture or close: {name}",
+            'description':  'No response after 2 follow-ups. Either nurture long-term or reject.',
+            'message':      _task_message('nurture', name=name),
+            'priority':     'Low',
+            'status':       'Pending',
+            'due_date':     _future_date(3),
+        })
+
+    elif task_type == 'test_call_invite':
+        follow_up_tid = create_action_task({
+            'task_type':    'interview_reminder',
+            'related_type': related_type,
+            'related_id':   related_id,
+            'title':        f"Test call reminder: {name}",
+            'description':  'Ensure test call happened and log outcome.',
+            'message':      _task_message('interview_reminder', name=name),
+            'priority':     'High',
+            'status':       'Pending',
+            'due_date':     _future_date(1),
+        })
+
+    return follow_up_tid
+
+
+def reject_action_task(tid: int):
+    update_action_task(tid, {'status': 'Rejected'})
+
+
+def reschedule_action_task(tid: int, new_due_date: str, notes: str = ''):
+    data = {'status': 'Rescheduled', 'due_date': new_due_date}
+    if notes:
+        existing = get_action_task(tid)
+        old_notes = existing.get('notes') or ''
+        data['notes'] = (old_notes + f"\n[Rescheduled to {new_due_date}]: {notes}").strip()
+    update_action_task(tid, data)
+
+
+def get_due_tasks() -> list:
+    return get_action_tasks(due_today=True)
+
+
+def get_overdue_tasks() -> list:
+    return get_action_tasks(overdue_only=True)
+
+
+# ── TASK FACTORY HELPERS ───────────────────────────────────────────────────────
+
+def create_followup_task(related_type: str, related_id: int,
+                          name: str, days: int = 2,
+                          task_type: str = 'follow_up_1',
+                          priority: str = 'Medium') -> int:
+    return create_action_task({
+        'task_type':    task_type,
+        'related_type': related_type,
+        'related_id':   related_id,
+        'title':        f"Follow-up: {name}",
+        'description':  'Scheduled follow-up.',
+        'message':      _task_message(task_type, name=name),
+        'priority':     priority,
+        'status':       'Pending',
+        'due_date':     _future_date(days),
+    })
+
+
+def create_candidate_next_action_task(candidate_id: int,
+                                       task_type: str = 'screening_message',
+                                       priority: str = 'High') -> int:
+    """Create a task linked to a candidate. Looks up candidate name automatically."""
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT full_name FROM cold_caller_candidates WHERE id=?", (candidate_id,)
+    ).fetchone()
+    conn.close()
+    name = row[0] if row else f"Candidate #{candidate_id}"
+
+    return create_action_task({
+        'task_type':    task_type,
+        'related_type': 'candidate',
+        'related_id':   candidate_id,
+        'title':        f"{task_type.replace('_', ' ').title()}: {name}",
+        'description':  f"Auto-created for {name}.",
+        'message':      _task_message(task_type, name=name),
+        'priority':     priority,
+        'status':       'Pending',
+        'due_date':     _today(),
+    })
+
+
+def create_client_next_action_task(campaign_id: int,
+                                    task_type: str = 'match_to_offer',
+                                    priority: str = 'Medium') -> int:
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT client_name FROM client_campaigns WHERE id=?", (campaign_id,)
+    ).fetchone()
+    conn.close()
+    name = row[0] if row else f"Campaign #{campaign_id}"
+
+    return create_action_task({
+        'task_type':    task_type,
+        'related_type': 'campaign',
+        'related_id':   campaign_id,
+        'title':        f"{task_type.replace('_', ' ').title()}: {name}",
+        'description':  f"Auto-created for campaign: {name}.",
+        'message':      _task_message(task_type, name=name),
+        'priority':     priority,
+        'status':       'Pending',
+        'due_date':     _today(),
+    })
+
+
+def get_action_task_summary() -> dict:
+    """Counts for the dashboard."""
+    conn = get_db()
+    def _n(q, *a):
+        return conn.execute(q, a).fetchone()[0]
+    today = _today()
+    d = {
+        'pending':       _n("SELECT COUNT(*) FROM action_tasks WHERE status='Pending'"),
+        'due_today':     _n("SELECT COUNT(*) FROM action_tasks WHERE due_date=? AND status NOT IN ('Completed','Rejected')", today),
+        'overdue':       _n("SELECT COUNT(*) FROM action_tasks WHERE due_date < ? AND status NOT IN ('Completed','Rejected')", today),
+        'high_priority': _n("SELECT COUNT(*) FROM action_tasks WHERE priority IN ('High','Critical') AND status NOT IN ('Completed','Rejected')"),
+        'sent_pending':  _n("SELECT COUNT(*) FROM action_tasks WHERE status='Sent'"),
+        'completed_today': _n("SELECT COUNT(*) FROM action_tasks WHERE status='Completed' AND date(completed_at)=?", today),
+        'blocked':       _n("SELECT COUNT(*) FROM action_tasks WHERE status IN ('Blocked','Needs Review')"),
+        'copied':        _n("SELECT COUNT(*) FROM action_tasks WHERE status='Copied'"),
+        'total':         _n("SELECT COUNT(*) FROM action_tasks"),
+    }
     conn.close()
     return d

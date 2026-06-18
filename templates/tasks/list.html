@@ -1,0 +1,156 @@
+{% extends "../base.html" %}
+{% block title %}Action Queue — Maple Growth OS{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Action Queue</h1>
+{% end %}
+
+{% block content %}
+
+<!-- Manual-safe notice -->
+<div class="mb-5 bg-indigo-950/40 border border-indigo-800/40 rounded-xl px-4 py-3 text-xs text-indigo-300 flex items-start gap-2">
+  <span class="text-base mt-0.5">🔒</span>
+  <span>{{ manual_safe_notice }}</span>
+</div>
+
+<!-- Stats row -->
+<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-5">
+  {% set tiles = [
+    ('Overdue',        str(summary['overdue']),        'text-red-400',    '?status=',    summary['overdue'] > 0),
+    ('Due Today',      str(summary['due_today']),      'text-amber-300',  '?status=',    summary['due_today'] > 0),
+    ('Pending',        str(summary['pending']),        'text-blue-300',   '?status=Pending', False),
+    ('High Priority',  str(summary['high_priority']), 'text-orange-300', '?priority=High', False),
+    ('Copied',         str(summary['copied']),         'text-indigo-300', '?status=Copied', False),
+    ('Sent',           str(summary['sent_pending']),   'text-yellow-300', '?status=Sent',   False),
+    ('Done Today',     str(summary['completed_today']),'text-green-300',  '?status=Completed', False),
+  ] %}
+  {% for label, val, cls, href, urgent in tiles %}
+  <a href="/tasks{{ href }}"
+     class="bg-slate-800 border border-{% if urgent %}red{% else %}slate{% end %}-700 rounded-xl p-3 hover:border-slate-500 transition-colors text-center">
+    <p class="text-2xl font-bold {{ cls }}">{{ val }}</p>
+    <p class="text-xs text-slate-500 mt-0.5 leading-tight">{{ label }}</p>
+  </a>
+  {% end %}
+</div>
+
+<!-- Overdue banner -->
+{% if overdue %}
+<div class="mb-4 bg-red-950/30 border border-red-900/40 rounded-xl px-4 py-3">
+  <p class="text-xs font-semibold text-red-400 mb-2">⚠ {{ len(overdue) }} Overdue</p>
+  <div class="flex flex-wrap gap-2">
+    {% for t in overdue[:5] %}
+    <a href="/tasks/{{ t['id'] }}"
+       class="text-xs bg-red-900/40 hover:bg-red-900/70 text-red-300 px-3 py-1 rounded-full transition-colors">
+      [{{ t['priority'] }}] {{ t['title'][:40] }}{% if len(t['title']) > 40 %}…{% end %}
+    </a>
+    {% end %}
+    {% if len(overdue) > 5 %}<span class="text-xs text-slate-500 self-center">+{{ len(overdue)-5 }} more</span>{% end %}
+  </div>
+</div>
+{% end %}
+
+<!-- Filters -->
+<div class="flex flex-wrap gap-2 mb-4 items-center">
+  <span class="text-xs text-slate-500">Filter:</span>
+  {% for label, param, val in [
+    ('All', '', ''),
+    ('Pending', 'status', 'Pending'),
+    ('Copied', 'status', 'Copied'),
+    ('Sent', 'status', 'Sent'),
+    ('Completed', 'status', 'Completed'),
+    ('Rejected', 'status', 'Rejected'),
+    ('Rescheduled', 'status', 'Rescheduled'),
+  ] %}
+  {% set active = (status_filter == val) %}
+  <a href="/tasks{% if val %}?status={{ val }}{% end %}"
+     class="text-xs px-3 py-1 rounded-full border transition-colors
+            {% if active %}bg-indigo-600 border-indigo-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+  {% for label, param, val in [
+    ('High', 'priority', 'High'),
+    ('Critical', 'priority', 'Critical'),
+  ] %}
+  {% set active = (priority_filter == val) %}
+  <a href="/tasks?priority={{ val }}"
+     class="text-xs px-3 py-1 rounded-full border transition-colors
+            {% if active %}bg-orange-700 border-orange-600 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+</div>
+
+<!-- Task list -->
+{% if items %}
+<div class="space-y-2">
+  {% for task in items %}
+  {% set is_overdue = task.get('due_date') and task['due_date'] < '2099' and task['status'] not in ('Completed','Rejected') and task['due_date'] < '2026-06-19' %}
+  <div class="bg-slate-800 border border-{% if task['priority'] == 'Critical' %}red{% elif task['priority'] == 'High' %}orange{% else %}slate{% end %}-800 rounded-xl p-4 flex items-start gap-3
+              {% if task['status'] in ('Completed', 'Rejected') %}opacity-50{% end %}">
+
+    <!-- Priority dot -->
+    <div class="flex-shrink-0 mt-1 w-2.5 h-2.5 rounded-full
+                {% if task['priority'] == 'Critical' %}bg-red-500
+                {% elif task['priority'] == 'High' %}bg-orange-400
+                {% elif task['priority'] == 'Medium' %}bg-blue-400
+                {% else %}bg-slate-600{% end %}"></div>
+
+    <div class="flex-1 min-w-0">
+      <div class="flex flex-wrap items-center gap-2 mb-0.5">
+        <a href="/tasks/{{ task['id'] }}" class="text-sm font-semibold text-white hover:text-indigo-300 transition-colors">
+          {{ task['title'] }}
+        </a>
+        <!-- Status badge -->
+        {% set sc = {'Pending':'bg-slate-700 text-slate-300','Copied':'bg-indigo-900 text-indigo-300','Sent':'bg-yellow-900 text-yellow-300','Completed':'bg-green-900 text-green-300','Rejected':'bg-red-950 text-red-400','Rescheduled':'bg-amber-900 text-amber-300','Blocked':'bg-orange-950 text-orange-400','Needs Review':'bg-violet-900 text-violet-300'} %}
+        <span class="badge {{ sc.get(task['status'], 'bg-slate-700 text-slate-300') }}">{{ task['status'] }}</span>
+        {% if task['priority'] in ('High','Critical') %}
+        <span class="badge {% if task['priority'] == 'Critical' %}bg-red-900 text-red-300{% else %}bg-orange-900 text-orange-300{% end %}">{{ task['priority'] }}</span>
+        {% end %}
+      </div>
+      <div class="flex flex-wrap gap-3 text-xs text-slate-500">
+        {% if task.get('related_name') %}
+        <span>👤 {{ task['related_name'] }}</span>
+        {% end %}
+        {% if task.get('task_type') %}
+        <span>{{ task['task_type'].replace('_',' ') }}</span>
+        {% end %}
+        {% if task.get('due_date') %}
+        <span class="{% if task['status'] not in ('Completed','Rejected') and task['due_date'] < '2026-06-20' %}text-red-400{% end %}">
+          Due {{ task['due_date'] }}
+        </span>
+        {% end %}
+      </div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="flex gap-1.5 flex-shrink-0">
+      <a href="/tasks/{{ task['id'] }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded transition-colors">Open</a>
+      {% if task['status'] == 'Pending' %}
+      <form method="POST" action="/tasks/{{ task['id'] }}/copy" class="inline">
+        <button type="submit" class="text-xs bg-indigo-800 hover:bg-indigo-700 text-indigo-200 px-2 py-1 rounded transition-colors">Copy</button>
+      </form>
+      {% elif task['status'] == 'Copied' %}
+      <form method="POST" action="/tasks/{{ task['id'] }}/mark-sent" class="inline">
+        <button type="submit" class="text-xs bg-yellow-900/60 hover:bg-yellow-900 text-yellow-300 px-2 py-1 rounded transition-colors">Sent ✓</button>
+      </form>
+      {% elif task['status'] == 'Sent' %}
+      <form method="POST" action="/tasks/{{ task['id'] }}/complete" class="inline">
+        <button type="submit" class="text-xs bg-green-900/60 hover:bg-green-900 text-green-300 px-2 py-1 rounded transition-colors">Done ✓</button>
+      </form>
+      {% end %}
+    </div>
+  </div>
+  {% end %}
+</div>
+{% else %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
+  <p class="text-slate-400 text-sm">
+    {% if status_filter %}No tasks with status "{{ status_filter }}".
+    {% else %}Action queue is empty.{% end %}
+  </p>
+  <p class="text-slate-600 text-xs mt-2">Tasks are created automatically when you approve or move research candidates.</p>
+</div>
+{% end %}
+
+{% end %}
