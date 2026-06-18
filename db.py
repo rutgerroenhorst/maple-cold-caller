@@ -616,6 +616,7 @@ def migrate_phase2():
         "ALTER TABLE outreach_queue ADD COLUMN notes TEXT",
         "ALTER TABLE candidate_match_scores ADD COLUMN status TEXT DEFAULT 'pending'",
         "ALTER TABLE candidate_match_scores ADD COLUMN notes TEXT",
+        "ALTER TABLE observer_recommendations ADD COLUMN resolved_at TEXT",
     ]:
         try:
             conn.execute(sql)
@@ -757,4 +758,623 @@ def get_daily_stats() -> dict:
     d['scheduled_interviews'] = conn.execute(
         "SELECT COUNT(*) FROM interview_queue WHERE status='scheduled'").fetchone()[0]
     conn.close()
-    return d
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Growth OS — Agents, Search Missions, Logs, Observer Recommendations
+# ──────────────────────────────────────────────────────────────────────────────
+
+_DEFAULT_ALLOWED = (
+    "generate search queries\n"
+    "process pasted text\n"
+    "score candidates\n"
+    "create internal tasks/recommendations\n"
+    "prepare messages\n"
+    "add candidates to review queue"
+)
+
+_DEFAULT_FORBIDDEN = (
+    "auto-send LinkedIn connection requests\n"
+    "auto-send LinkedIn DMs\n"
+    "auto-comment on LinkedIn\n"
+    "auto-like/follow on LinkedIn\n"
+    "scrape logged-in LinkedIn\n"
+    "bypass platform limits"
+)
+
+_DEFAULT_AGENTS = [
+    {
+        'name': 'Signal Hunter Agent', 'type': 'signal_hunter',
+        'description': 'Monitors for buying signals and trigger events indicating a good time to reach out to potential cold callers.',
+        'instructions': 'Scan for signals that a candidate is actively looking for sales opportunities. Look for: new job posts, LinkedIn activity, profile updates, or keyword matches in pasted content. Flag high-signal candidates for outreach.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Candidate Research Worker', 'type': 'candidate_research',
+        'description': 'Generates targeted search queries based on active search missions. Recommends where and how to find the next batch of candidates.',
+        'instructions': 'Review all active search missions. For each mission, generate 3–5 targeted LinkedIn/Google search queries. Prioritize missions with the lowest candidate count vs daily_target. Output queries the recruiter can run manually.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Talent Scout Agent', 'type': 'talent_scout',
+        'description': 'Reviews the current candidate pool, identifies who needs action, and surfaces the top candidates to move forward.',
+        'instructions': 'Review all candidates. Identify: (1) candidates stuck in "found" for too long, (2) high-score candidates with no match score, (3) qualified candidates with no outreach, (4) "replied" candidates needing follow-up. Output a prioritized action list.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Offer Match Agent', 'type': 'offer_match',
+        'description': 'Matches qualified candidates to active campaigns based on skills, language, availability, and commission fit.',
+        'instructions': 'For each qualified candidate without a match score, compare their profile to all active campaigns. Generate ranked (candidate, campaign) pairs by fit score. Flag pairs with match_score >= quality_threshold as ready to create a match record.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Outreach Operator Agent', 'type': 'outreach_operator',
+        'description': 'Prepares outreach messages for candidates in the pipeline. Generates message sequences ready for human review and send.',
+        'instructions': 'For each qualified/contacted candidate with no pending outreach, prepare: connection request, first DM, two follow-ups. All messages must be reviewed by a human before sending. Never auto-send. Use Prepare → Review → Human Send → Mark Sent flow.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Follow-up Agent', 'type': 'follow_up',
+        'description': 'Detects candidates and outreach items that need a follow-up. Surfaces overdue items and candidates going cold.',
+        'instructions': 'Check outreach_queue for items where status is "sent" or "pending" and next_follow_up_date is today or past. Check interview_queue for interviews today. Return a prioritized action list for the recruiter.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Call Script Agent', 'type': 'call_script',
+        'description': 'Generates personalized call scripts and talking points for qualified candidates, tailored to the campaign.',
+        'instructions': 'For each candidate matched to a campaign, generate: 30-second opener, 3 qualifying questions, value proposition tailored to the candidate\'s background, objection handling for top 3 objections. Scripts must be reviewed before use.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Account Health Agent', 'type': 'account_health',
+        'description': 'Monitors active campaigns and flags health issues: no candidates, stale pipeline, missing match scores.',
+        'instructions': 'For each active campaign check: number of candidates, average match score, last outreach date, interviews scheduled. Flag campaigns with < 3 candidates, no outreach in 7 days, or no interviews as "at risk".',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Performance Agent', 'type': 'performance',
+        'description': 'Tracks key recruitment metrics: sourcing velocity, outreach response rates, interview-to-placement ratio, and pipeline health.',
+        'instructions': 'Calculate and summarize: (1) candidates by status, (2) outreach sent vs replied, (3) interviews scheduled vs completed, (4) placements this month, (5) active vs filled campaigns. Highlight any metric below target.',
+        'schedule': 'manual', 'requires_human_approval': 1,
+    },
+    {
+        'name': 'Observer Agent', 'type': 'observer',
+        'description': 'Watches the full pipeline. Identifies bottlenecks, flags issues, and makes concrete recommendations to unblock recruitment flow.',
+        'instructions': 'Review the full pipeline: candidates, campaigns, outreach, interviews, agent logs, and search missions. Identify the single biggest bottleneck. Write a specific, actionable recommendation with the exact fix. Create an observer_recommendation record.',
+        'schedule': 'daily', 'requires_human_approval': 0,
+    },
+]
+
+_DEFAULT_MISSIONS = [
+    {
+        'name': 'NL Cold Callers',
+        'description': 'Find Dutch-speaking B2B cold callers available for commission or hourly freelance work.',
+        'target_role': 'Cold Caller / Telefonische Acquisitie',
+        'target_language': 'Dutch', 'target_market': 'Netherlands',
+        'keywords': 'koude acquisitie\ntelemarketeer\ncold caller\nappointment setter\nafspraken maken\nB2B sales freelance\ntelefoon acquisitie',
+        'negative_keywords': 'agency owner\ntrainer\ncoach\nrecruiter',
+        'allowed_sources': 'LinkedIn\nFreelancer.nl\nReferrals',
+        'forbidden_sources': 'Instagram DM spam\nPaid databases without consent',
+        'daily_target': 5, 'quality_threshold': 60, 'status': 'active',
+        'instructions': 'Search LinkedIn for Dutch speakers with "koude acquisitie" or "cold calling" in their profile. Target: freelancers, self-employed, or open-to-work. Avoid agencies unless the person is individually approachable.',
+    },
+    {
+        'name': 'Commission Remote Sales',
+        'description': 'Find sales professionals comfortable with commission-only or hybrid pay who can work remotely.',
+        'target_role': 'Commission Sales / Remote SDR',
+        'target_language': 'Dutch / English', 'target_market': 'Netherlands / Belgium',
+        'keywords': 'commission only\nno cure no pay\nprovisiebasis\nSDR freelance\nremote sales\noutbound freelance',
+        'negative_keywords': 'base salary only\nfull time employee\nno freelance',
+        'allowed_sources': 'LinkedIn\nFreelancer.nl\nUpwork',
+        'forbidden_sources': 'Instagram DM spam\nPaid databases without consent',
+        'daily_target': 3, 'quality_threshold': 55, 'status': 'active',
+        'instructions': 'Search for sales professionals who explicitly mention commission-based or no-cure-no-pay work. Must be open to freelance. Filter for Dutch/Belgian market.',
+    },
+    {
+        'name': 'Young Hungry Setters',
+        'description': 'Identify ambitious junior appointment setters (0-3 years experience) willing to learn and grow on performance basis.',
+        'target_role': 'Junior Appointment Setter / Sales Trainee',
+        'target_language': 'Dutch', 'target_market': 'Netherlands',
+        'keywords': 'appointment setter\nsales trainee\njunior SDR\nstarter sales\nenthousaiste verkoper\nyoung professional sales',
+        'negative_keywords': 'senior\nmanager\ndirector\n10+ years',
+        'allowed_sources': 'LinkedIn\nUniversity job boards',
+        'forbidden_sources': 'Instagram DM spam\nPaid databases without consent',
+        'daily_target': 4, 'quality_threshold': 45, 'status': 'active',
+        'instructions': 'Target recent graduates or early-career professionals in sales. Look for internship experience in outbound sales or telemarketing. Coachability matters more than proven results.',
+    },
+    {
+        'name': 'Experienced Closers',
+        'description': 'Find senior B2B closers with proven track records who can handle complex sales cycles.',
+        'target_role': 'Senior Closer / Account Executive',
+        'target_language': 'Dutch / English', 'target_market': 'Netherlands',
+        'keywords': 'B2B closer\naccount executive freelance\nclosing specialist\nhigh ticket sales\nenterprise sales freelance\nconsultative selling',
+        'negative_keywords': 'inbound only\ncustomer service\nretail',
+        'allowed_sources': 'LinkedIn',
+        'forbidden_sources': 'Instagram DM spam\nPaid databases without consent',
+        'daily_target': 2, 'quality_threshold': 75, 'status': 'paused',
+        'instructions': 'Search for senior B2B sales professionals with track record of closing complex deals. Look for: quota attainment figures, deal sizes, SaaS/services/consultancy background. Commission structure must be attractive.',
+    },
+]
+
+
+def init_agents_tables():
+    """Create Growth OS tables and seed defaults if empty."""
+    conn = get_db()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS agents (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                    TEXT NOT NULL,
+        type                    TEXT,
+        description             TEXT,
+        status                  TEXT DEFAULT 'idle',
+        enabled                 INTEGER DEFAULT 1,
+        last_run_at             TEXT,
+        latest_output           TEXT,
+        current_issue           TEXT,
+        recommendation          TEXT,
+        instructions            TEXT,
+        allowed_actions         TEXT,
+        forbidden_actions       TEXT,
+        requires_human_approval INTEGER DEFAULT 1,
+        schedule                TEXT DEFAULT 'manual',
+        settings_json           TEXT DEFAULT '{}',
+        created_at              TEXT DEFAULT (datetime('now')),
+        updated_at              TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS search_missions (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                TEXT NOT NULL,
+        description         TEXT,
+        target_role         TEXT,
+        target_language     TEXT DEFAULT 'Dutch',
+        target_market       TEXT DEFAULT 'Netherlands',
+        keywords            TEXT,
+        negative_keywords   TEXT,
+        allowed_sources     TEXT,
+        forbidden_sources   TEXT,
+        daily_target        INTEGER DEFAULT 5,
+        quality_threshold   INTEGER DEFAULT 60,
+        status              TEXT DEFAULT 'active',
+        instructions        TEXT,
+        created_at          TEXT DEFAULT (datetime('now')),
+        updated_at          TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_logs (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id        INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+        event_type      TEXT DEFAULT 'run',
+        output          TEXT,
+        issue           TEXT,
+        recommendation  TEXT,
+        created_at      TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS observer_recommendations (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        bottleneck      TEXT,
+        impact          TEXT,
+        recommendation  TEXT,
+        exact_fix       TEXT,
+        status          TEXT DEFAULT 'open',
+        related_tasks   TEXT,
+        created_at      TEXT DEFAULT (datetime('now'))
+    );
+    """)
+    conn.commit()
+
+    # Seed agents
+    if conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0] == 0:
+        for a in _DEFAULT_AGENTS:
+            conn.execute(
+                """INSERT INTO agents (name, type, description, instructions,
+                   allowed_actions, forbidden_actions, requires_human_approval, schedule)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (a['name'], a['type'], a['description'], a['instructions'],
+                 _DEFAULT_ALLOWED, _DEFAULT_FORBIDDEN,
+                 a['requires_human_approval'], a['schedule'])
+            )
+        conn.commit()
+
+    # Seed missions
+    if conn.execute("SELECT COUNT(*) FROM search_missions").fetchone()[0] == 0:
+        for m in _DEFAULT_MISSIONS:
+            fields = ['name','description','target_role','target_language','target_market',
+                      'keywords','negative_keywords','allowed_sources','forbidden_sources',
+                      'daily_target','quality_threshold','status','instructions']
+            vals = [m.get(f,'') for f in fields]
+            ph = ','.join(['?']*len(fields))
+            conn.execute(f"INSERT INTO search_missions ({','.join(fields)}) VALUES ({ph})", vals)
+        conn.commit()
+
+    conn.close()
+
+
+# ── Agents CRUD ───────────────────────────────────────────────────────────────
+
+def get_agents(enabled_only=False):
+    conn = get_db()
+    q = "SELECT * FROM agents"
+    if enabled_only:
+        q += " WHERE enabled=1"
+    q += " ORDER BY id"
+    rows = to_list(conn.execute(q).fetchall())
+    conn.close()
+    return rows
+
+
+def get_agent(aid):
+    conn = get_db()
+    row = to_dict(conn.execute("SELECT * FROM agents WHERE id=?", (aid,)).fetchone())
+    conn.close()
+    return row
+
+
+def create_agent(data):
+    conn = get_db()
+    fields = ['name','type','description','instructions','allowed_actions','forbidden_actions',
+              'requires_human_approval','schedule','settings_json','enabled']
+    vals = [data.get(f, '') for f in fields]
+    ph = ','.join(['?']*len(fields))
+    c = conn.execute(f"INSERT INTO agents ({','.join(fields)}) VALUES ({ph})", vals)
+    conn.commit()
+    rid = c.lastrowid
+    conn.close()
+    return rid
+
+
+def update_agent(aid, data):
+    conn = get_db()
+    fields = ['name','type','description','instructions','allowed_actions','forbidden_actions',
+              'requires_human_approval','schedule','settings_json','enabled']
+    sets = ', '.join(f"{f}=?" for f in fields) + ", updated_at=?"
+    vals = [data.get(f, '') for f in fields] + [now(), aid]
+    conn.execute(f"UPDATE agents SET {sets} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def toggle_agent(aid):
+    conn = get_db()
+    conn.execute("UPDATE agents SET enabled=CASE WHEN enabled=1 THEN 0 ELSE 1 END, updated_at=? WHERE id=?",
+                 (now(), aid))
+    conn.commit()
+    conn.close()
+
+
+# ── Agent Logs ────────────────────────────────────────────────────────────────
+
+def get_agent_logs(agent_id, limit=20):
+    conn = get_db()
+    rows = to_list(conn.execute(
+        "SELECT * FROM agent_logs WHERE agent_id=? ORDER BY created_at DESC LIMIT ?",
+        (agent_id, limit)).fetchall())
+    conn.close()
+    return rows
+
+
+def create_agent_log(data):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO agent_logs (agent_id, event_type, output, issue, recommendation) VALUES (?,?,?,?,?)",
+        (data.get('agent_id'), data.get('event_type','run'),
+         data.get('output',''), data.get('issue',''), data.get('recommendation',''))
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── Run Agent ─────────────────────────────────────────────────────────────────
+
+def run_agent(agent_id: int):
+    """Execute an agent's rule-based analysis. Returns (output, error)."""
+    agent = get_agent(agent_id)
+    if not agent:
+        return None, "Agent not found"
+    if not agent.get('enabled'):
+        return None, "Agent is disabled"
+
+    atype = agent.get('type', '')
+    output = issue = recommendation = ''
+    conn = get_db()
+
+    try:
+        if atype == 'candidate_research':
+            missions = to_list(conn.execute(
+                "SELECT * FROM search_missions WHERE status='active'").fetchall())
+            total = conn.execute(
+                "SELECT COUNT(*) FROM cold_caller_candidates").fetchone()[0]
+            if missions:
+                output = f"Active search missions: {len(missions)}\n\n"
+                for m in missions:
+                    kws = [k.strip() for k in (m.get('keywords') or '').split('\n') if k.strip()][:3]
+                    output += f"▸ {m['name']} — target: {m.get('target_role') or 'any'}, daily target: {m['daily_target']}/day\n"
+                    if kws:
+                        q_str = '" OR "'.join(kws[:2])
+                        output += f'  Recommended query: site:linkedin.com/in ("{q_str}") {m.get("target_market","Netherlands")}\n'
+                    output += '\n'
+                output += f"Total candidates in pipeline: {total}"
+            else:
+                output = f"No active search missions found. Total candidates: {total}\nCreate a search mission first to guide sourcing."
+                issue = "No active search missions"
+                recommendation = "Create at least one search mission to direct candidate sourcing"
+
+        elif atype == 'talent_scout':
+            rows = to_list(conn.execute(
+                "SELECT id, status, full_name, global_score FROM cold_caller_candidates").fetchall())
+            by_status = {}
+            for r in rows:
+                s = r.get('status', 'found')
+                by_status[s] = by_status.get(s, 0) + 1
+            total = len(rows)
+            if total == 0:
+                issue = "No candidates in pipeline"
+                output = "No candidates found. Add candidates via search missions or manually."
+                recommendation = "Add candidates before scouting."
+            else:
+                output = f"Candidate pipeline — {total} total:\n"
+                for s, n_count in sorted(by_status.items()):
+                    output += f"  {s}: {n_count}\n"
+                actions = []
+                found_n = by_status.get('found', 0)
+                qualified_n = by_status.get('qualified', 0)
+                replied_n = by_status.get('replied', 0)
+                if found_n:
+                    actions.append(f"Review {found_n} 'found' candidate(s) — contact, reject, or AI-score them")
+                if qualified_n:
+                    actions.append(f"Schedule outreach or interview for {qualified_n} qualified candidate(s)")
+                if replied_n:
+                    actions.append(f"Follow up with {replied_n} 'replied' candidate(s)")
+                if actions:
+                    output += "\nActions needed:\n" + "\n".join(f"  ▸ {a}" for a in actions)
+                    recommendation = actions[0]
+
+        elif atype == 'follow_up':
+            from datetime import datetime as _dt
+            today = _dt.utcnow().strftime('%Y-%m-%d')
+            due = to_list(conn.execute(
+                """SELECT oq.next_follow_up_date, oq.outreach_status, ca.full_name
+                   FROM outreach_queue oq
+                   LEFT JOIN cold_caller_candidates ca ON oq.candidate_id=ca.id
+                   WHERE oq.outreach_status NOT IN ('closed','booked')
+                     AND (oq.next_follow_up_date <= ? OR oq.next_follow_up_date IS NULL
+                          OR oq.next_follow_up_date='')
+                   LIMIT 10""", (today,)).fetchall())
+            interviews = to_list(conn.execute(
+                """SELECT iq.interview_time, ca.full_name
+                   FROM interview_queue iq
+                   LEFT JOIN cold_caller_candidates ca ON iq.candidate_id=ca.id
+                   WHERE iq.interview_date=? AND iq.status='scheduled'""", (today,)).fetchall())
+            if due:
+                output = f"{len(due)} outreach item(s) need follow-up:\n"
+                for o in due[:5]:
+                    output += f"  ▸ {o.get('full_name','?')} — {o.get('outreach_status','?')} — due: {o.get('next_follow_up_date','—')}\n"
+                issue = f"{len(due)} overdue follow-ups"
+                recommendation = f"Send follow-up messages to {len(due)} overdue candidate(s)"
+            else:
+                output = "No overdue outreach items.\n"
+            if interviews:
+                output += f"\n{len(interviews)} interview(s) scheduled today:\n"
+                for i in interviews:
+                    output += f"  ▸ {i.get('full_name','?')} at {i.get('interview_time','TBD')}\n"
+            else:
+                output += "No interviews today."
+            if not due and not interviews:
+                recommendation = "Pipeline clear — keep sourcing new candidates."
+
+        elif atype == 'performance':
+            def _n(q):
+                return conn.execute(q).fetchone()[0]
+            cands = _n("SELECT COUNT(*) FROM cold_caller_candidates")
+            active_c = _n("SELECT COUNT(*) FROM client_campaigns WHERE status='active'")
+            total_c = _n("SELECT COUNT(*) FROM client_campaigns")
+            placed = _n("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='placed'")
+            in_interview = _n("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='interview'")
+            qualified = _n("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='qualified'")
+            out_total = _n("SELECT COUNT(*) FROM outreach_queue")
+            out_sent = _n("SELECT COUNT(*) FROM outreach_queue WHERE outreach_status='sent'")
+            out_replied = _n("SELECT COUNT(*) FROM outreach_queue WHERE outreach_status='replied'")
+            int_sched = _n("SELECT COUNT(*) FROM interview_queue WHERE status='scheduled'")
+            output = (
+                f"Performance Summary\n\n"
+                f"Campaigns:   {active_c} active / {total_c} total\n"
+                f"Candidates:  {cands} total | {qualified} qualified | "
+                f"{in_interview} in interview | {placed} placed\n"
+                f"Outreach:    {out_total} total | {out_sent} sent | {out_replied} replied\n"
+                f"Interviews:  {int_sched} scheduled\n"
+            )
+            if cands == 0:
+                issue = "No candidates in pipeline"
+                recommendation = "Start sourcing candidates immediately"
+            elif placed == 0 and cands > 3:
+                recommendation = "No placements yet — move qualified candidates to interview stage"
+            else:
+                recommendation = "Keep sourcing and convert interviewed candidates to placed"
+
+        elif atype == 'observer':
+            def _n(q):
+                return conn.execute(q).fetchone()[0]
+            nc = _n("SELECT COUNT(*) FROM cold_caller_candidates")
+            ncamp = _n("SELECT COUNT(*) FROM client_campaigns WHERE status='active'")
+            nmiss = _n("SELECT COUNT(*) FROM search_missions WHERE status='active'")
+            nout = _n("SELECT COUNT(*) FROM outreach_queue WHERE outreach_status='pending'")
+            nint = _n("SELECT COUNT(*) FROM interview_queue WHERE status='scheduled'")
+            ndue = _n(
+                "SELECT COUNT(*) FROM outreach_queue "
+                "WHERE outreach_status NOT IN ('closed','booked') "
+                "AND (next_follow_up_date <= date('now') OR next_follow_up_date IS NULL "
+                "OR next_follow_up_date='')")
+
+            if nc == 0:
+                bot, impact = "No candidates in pipeline", "Critical"
+                rec = "Add at least 5 candidates before any other work"
+                fix = "Go to /candidates/new or run a search mission and paste profiles"
+            elif ncamp == 0:
+                bot, impact = "No active campaigns", "High"
+                rec = "Create a campaign to enable candidate matching"
+                fix = "Go to /campaigns/new and create a campaign"
+            elif nmiss == 0:
+                bot, impact = "No active search missions", "Medium"
+                rec = "Create a search mission to direct the Candidate Research Worker"
+                fix = "Go to /search-missions/new"
+            elif ndue > 0:
+                bot = f"{ndue} overdue follow-up(s)"
+                impact = "Medium"
+                rec = f"Action {ndue} overdue follow-up(s) before candidates go cold"
+                fix = "Go to /outreach and follow up with overdue items"
+            elif nout == 0 and nc > 0:
+                bot, impact = "No outreach initiated", "Medium"
+                rec = "Start outreach on your top candidates"
+                fix = "Go to /candidates → pick top scored → Add Outreach → Generate with AI"
+            elif nint == 0 and nc > 2:
+                bot, impact = "No interviews scheduled", "Low"
+                rec = "Schedule an interview with your most qualified candidate"
+                fix = "Go to /interviews/new"
+            else:
+                bot, impact = "No critical bottleneck detected", "Low"
+                rec = "Pipeline is healthy — focus on sourcing velocity"
+                fix = "Run Candidate Research Worker for new search queries"
+
+            output = (
+                f"Observer Analysis\n\n"
+                f"  Candidates: {nc} | Active campaigns: {ncamp} | Missions: {nmiss}\n"
+                f"  Pending outreach: {nout} | Interviews: {nint} | Overdue: {ndue}\n\n"
+                f"Bottleneck: {bot}\n"
+                f"Impact: {impact}\n"
+                f"Recommendation: {rec}\n"
+                f"How to fix: {fix}"
+            )
+            issue = bot
+            recommendation = rec
+            conn.close()
+            conn = None
+            create_observer_recommendation({
+                'bottleneck': bot, 'impact': impact,
+                'recommendation': rec, 'exact_fix': fix, 'status': 'open',
+            })
+
+        else:
+            output = (f"Agent '{agent['name']}' checked in. "
+                      f"No specific analysis configured for type '{atype}' yet.")
+            recommendation = "Configure this agent's run behavior or use it manually."
+
+    except Exception as e:
+        output = f"Error during agent run: {e}"
+        issue = str(e)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    # Persist results
+    uconn = get_db()
+    uconn.execute(
+        "UPDATE agents SET last_run_at=?, latest_output=?, current_issue=?, "
+        "recommendation=?, updated_at=? WHERE id=?",
+        (now(), output, issue, recommendation, now(), agent_id)
+    )
+    uconn.commit()
+    uconn.close()
+
+    create_agent_log({'agent_id': agent_id, 'event_type': 'run',
+                      'output': output, 'issue': issue, 'recommendation': recommendation})
+    return output, None
+
+
+# ── Search Missions CRUD ──────────────────────────────────────────────────────
+
+def get_search_missions(status=''):
+    conn = get_db()
+    q = "SELECT * FROM search_missions WHERE 1=1"
+    args = []
+    if status:
+        q += " AND status=?"
+        args.append(status)
+    q += " ORDER BY created_at DESC"
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def get_search_mission(mid):
+    conn = get_db()
+    row = to_dict(conn.execute("SELECT * FROM search_missions WHERE id=?", (mid,)).fetchone())
+    conn.close()
+    return row
+
+
+def create_search_mission(data):
+    conn = get_db()
+    fields = ['name','description','target_role','target_language','target_market',
+              'keywords','negative_keywords','allowed_sources','forbidden_sources',
+              'daily_target','quality_threshold','status','instructions']
+    vals = [data.get(f, '') for f in fields]
+    ph = ','.join(['?']*len(fields))
+    c = conn.execute(f"INSERT INTO search_missions ({','.join(fields)}) VALUES ({ph})", vals)
+    conn.commit()
+    rid = c.lastrowid
+    conn.close()
+    return rid
+
+
+def update_search_mission(mid, data):
+    conn = get_db()
+    fields = ['name','description','target_role','target_language','target_market',
+              'keywords','negative_keywords','allowed_sources','forbidden_sources',
+              'daily_target','quality_threshold','status','instructions']
+    sets = ', '.join(f"{f}=?" for f in fields) + ", updated_at=?"
+    vals = [data.get(f, '') for f in fields] + [now(), mid]
+    conn.execute(f"UPDATE search_missions SET {sets} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def pause_search_mission(mid):
+    conn = get_db()
+    conn.execute(
+        "UPDATE search_missions SET status=CASE WHEN status='active' THEN 'paused' ELSE 'active' END, "
+        "updated_at=? WHERE id=?", (now(), mid))
+    conn.commit()
+    conn.close()
+
+
+# ── Observer Recommendations ──────────────────────────────────────────────────
+
+def get_observer_recommendations(status=''):
+    conn = get_db()
+    q = "SELECT * FROM observer_recommendations WHERE 1=1"
+    args = []
+    if status:
+        q += " AND status=?"
+        args.append(status)
+    q += " ORDER BY created_at DESC"
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def create_observer_recommendation(data):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO observer_recommendations "
+        "(bottleneck, impact, recommendation, exact_fix, status, related_tasks) "
+        "VALUES (?,?,?,?,?,?)",
+        (data.get('bottleneck',''), data.get('impact',''),
+         data.get('recommendation',''), data.get('exact_fix',''),
+         data.get('status','open'), data.get('related_tasks',''))
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_observer_recommendation(rid, data):
+    conn = get_db()
+    status = data.get('status', 'open')
+    resolved_at = datetime.utcnow().isoformat() if status == 'resolved' else None
+    conn.execute(
+        "UPDATE observer_recommendations SET status=?, resolved_at=? WHERE id=?",
+        (status, resolved_at, rid)
+    )
+    conn.commit()
+    conn.close()
+    return rid

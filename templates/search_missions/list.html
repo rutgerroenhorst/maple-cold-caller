@@ -1,0 +1,96 @@
+{% extends "../base.html" %}
+{% block title %}Search Missions — Maple Growth OS{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Search Missions</h1>
+{% end %}
+
+{% block header_actions %}
+<a href="/search-missions/new"
+   class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+  </svg>
+  New Mission
+</a>
+{% end %}
+
+{% block content %}
+
+<p class="text-sm text-slate-400 mb-5">
+  Search missions define <em>what</em> to look for and <em>where</em>. The Candidate Research Worker uses these to generate targeted search queries.
+</p>
+
+{% if missions %}
+<div class="space-y-4">
+{% for m in missions %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-5 {% if m['status'] == 'paused' %}opacity-70{% end %}">
+  <div class="flex flex-wrap items-start gap-3 mb-3">
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-sm font-semibold text-white">{{ m['name'] }}</span>
+        {% if m['status'] == 'active' %}
+        <span class="badge bg-green-900 text-green-300">active</span>
+        {% elif m['status'] == 'paused' %}
+        <span class="badge bg-amber-900 text-amber-300">paused</span>
+        {% else %}
+        <span class="badge bg-slate-700 text-slate-400">{{ m['status'] }}</span>
+        {% end %}
+        <span class="text-xs text-slate-500">Target: {{ m['target_role'] or 'any role' }}</span>
+      </div>
+      <p class="text-xs text-slate-400 mt-1">{{ m['description'] or '' }}</p>
+    </div>
+    <div class="flex gap-2 flex-shrink-0">
+      <a href="/search-missions/{{ m['id'] }}/edit"
+         class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors">Edit</a>
+      <form method="POST" action="/search-missions/{{ m['id'] }}/pause" class="inline">
+        <button type="submit"
+                class="text-xs {% if m['status'] == 'active' %}bg-amber-900/40 hover:bg-amber-900/70 text-amber-300{% else %}bg-green-900/40 hover:bg-green-900/70 text-green-300{% end %} px-3 py-1.5 rounded-lg transition-colors">
+          {{ 'Pause' if m['status'] == 'active' else 'Resume' }}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+    <div class="bg-slate-900 rounded-lg p-2">
+      <p class="text-slate-500">Language</p>
+      <p class="text-white">{{ m['target_language'] or '—' }}</p>
+    </div>
+    <div class="bg-slate-900 rounded-lg p-2">
+      <p class="text-slate-500">Market</p>
+      <p class="text-white">{{ m['target_market'] or '—' }}</p>
+    </div>
+    <div class="bg-slate-900 rounded-lg p-2">
+      <p class="text-slate-500">Daily target</p>
+      <p class="text-white font-bold">{{ m['daily_target'] or 0 }} candidates</p>
+    </div>
+    <div class="bg-slate-900 rounded-lg p-2">
+      <p class="text-slate-500">Min quality</p>
+      <p class="text-white font-bold">{{ m['quality_threshold'] or 0 }}+</p>
+    </div>
+  </div>
+
+  {% if m['keywords'] %}
+  <div class="mt-3">
+    <p class="text-xs text-slate-500 mb-1">Keywords</p>
+    <div class="flex flex-wrap gap-1">
+      {% for kw in (m['keywords'] or '').split('\n') %}
+      {% if kw.strip() %}
+      <span class="text-xs bg-indigo-900/40 text-indigo-300 px-2 py-0.5 rounded-full">{{ kw.strip() }}</span>
+      {% end %}
+      {% end %}
+    </div>
+  </div>
+  {% end %}
+</div>
+{% end %}
+</div>
+{% else %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
+  <p class="text-slate-400 text-sm mb-3">No search missions yet.</p>
+  <a href="/search-missions/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">Create First Mission</a>
+</div>
+{% end %}
+
+{% end %}

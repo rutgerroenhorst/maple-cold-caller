@@ -543,6 +543,118 @@ class InterviewStatusHandler(Base):
 # Phase 2 — AI Scoring
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Growth OS — Agents
+# ──────────────────────────────────────────────────────────────────────────────
+
+class AgentListHandler(Base):
+    def get(self):
+        agents = db.get_agents()
+        self.render("agents/list.html", agents=agents, page='agents')
+
+
+class AgentDetailHandler(Base):
+    def get(self, aid):
+        agent = db.get_agent(int(aid))
+        if not agent:
+            self.send_error(404); return
+        logs = db.get_agent_logs(int(aid), limit=15)
+        self.render("agents/detail.html", agent=agent, logs=logs, page='agents')
+
+
+class AgentEditHandler(Base):
+    def get(self, aid):
+        agent = db.get_agent(int(aid))
+        if not agent:
+            self.send_error(404); return
+        self.render("agents/form.html", agent=agent, page='agents')
+
+    def post(self, aid):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        # checkbox fields
+        data['enabled'] = 1 if self.get_argument('enabled', '') else 0
+        data['requires_human_approval'] = 1 if self.get_argument('requires_human_approval', '') else 0
+        db.update_agent(int(aid), data)
+        self.redirect(f'/agents/{aid}')
+
+
+class AgentRunHandler(Base):
+    def post(self, aid):
+        output, err = db.run_agent(int(aid))
+        self.redirect(f'/agents/{aid}')
+
+
+class AgentToggleHandler(Base):
+    def post(self, aid):
+        db.toggle_agent(int(aid))
+        self.redirect(self.get_argument('next', '/agents'))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Growth OS — Search Missions
+# ──────────────────────────────────────────────────────────────────────────────
+
+class SearchMissionListHandler(Base):
+    def get(self):
+        missions = db.get_search_missions()
+        self.render("search_missions/list.html", missions=missions, page='search_missions')
+
+
+class SearchMissionNewHandler(Base):
+    def get(self):
+        self.render("search_missions/form.html", mission=None, page='search_missions')
+
+    def post(self):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        mid = db.create_search_mission(data)
+        self.redirect(f'/search-missions')
+
+
+class SearchMissionEditHandler(Base):
+    def get(self, mid):
+        mission = db.get_search_mission(int(mid))
+        if not mission:
+            self.send_error(404); return
+        self.render("search_missions/form.html", mission=mission, page='search_missions')
+
+    def post(self, mid):
+        data = {k: self.get_argument(k, '') for k in self.request.arguments}
+        data = {k: v[0].decode() if isinstance(v, list) else v for k, v in data.items()}
+        db.update_search_mission(int(mid), data)
+        self.redirect('/search-missions')
+
+
+class SearchMissionPauseHandler(Base):
+    def post(self, mid):
+        db.pause_search_mission(int(mid))
+        self.redirect('/search-missions')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Growth OS — Observer
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ObserverHandler(Base):
+    def get(self):
+        open_recs = db.get_observer_recommendations(status='open')
+        resolved_recs = db.get_observer_recommendations(status='resolved')
+        # find observer agent id for the "Run Observer Agent" button
+        agents = db.get_agents()
+        observer_agent = next((a for a in agents if a.get('type') == 'observer'), None)
+        observer_agent_id = observer_agent['id'] if observer_agent else 0
+        self.render("observer/index.html",
+                    open_recs=open_recs, resolved_recs=resolved_recs,
+                    observer_agent_id=observer_agent_id, page='observer')
+
+
+class ObserverResolveHandler(Base):
+    def post(self, rid):
+        db.update_observer_recommendation(int(rid), {'status': 'resolved'})
+        self.redirect('/observer')
+
+
 class AICandidateScoreHandler(Base):
     """POST /api/candidates/{id}/ai-score → runs AI scoring, saves result."""
     def post(self, cid):
@@ -676,6 +788,7 @@ class DailyDashboardHandler(Base):
 def make_app():
     db.init_db()
     db.migrate_phase2()
+    db.init_agents_tables()
     # Derive cookie secret from password (or use env override); never empty
     _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
     cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
@@ -730,6 +843,18 @@ def make_app():
         (r"/candidates/bulk-action",            CandidateBulkHandler),
         (r"/import/candidates",                 CandidateImportHandler),
         (r"/daily",                             DailyDashboardHandler),
+        # Growth OS
+        (r"/agents",                            AgentListHandler),
+        (r"/agents/([0-9]+)",                   AgentDetailHandler),
+        (r"/agents/([0-9]+)/edit",              AgentEditHandler),
+        (r"/agents/([0-9]+)/run",               AgentRunHandler),
+        (r"/agents/([0-9]+)/toggle",            AgentToggleHandler),
+        (r"/search-missions",                   SearchMissionListHandler),
+        (r"/search-missions/new",               SearchMissionNewHandler),
+        (r"/search-missions/([0-9]+)/edit",     SearchMissionEditHandler),
+        (r"/search-missions/([0-9]+)/pause",    SearchMissionPauseHandler),
+        (r"/observer",                          ObserverHandler),
+        (r"/observer/([0-9]+)/resolve",         ObserverResolveHandler),
     ], **settings)
 
 

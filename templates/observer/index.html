@@ -1,0 +1,90 @@
+{% extends "../base.html" %}
+{% block title %}Observer — Maple Growth OS{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Observer</h1>
+{% end %}
+
+{% block header_actions %}
+{% if observer_agent_id %}
+<form method="POST" action="/agents/{{ observer_agent_id }}/run">
+  <button type="submit"
+          class="inline-flex items-center gap-1.5 bg-violet-700 hover:bg-violet-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+    ↻ Run Observer Agent
+  </button>
+</form>
+{% end %}
+{% end %}
+
+{% block content %}
+
+<p class="text-sm text-slate-400 mb-5">
+  The Observer monitors the recruitment pipeline and surfaces bottlenecks, stale candidates, and action items that need your attention.
+</p>
+
+<!-- Open recommendations -->
+{% if open_recs %}
+<div class="mb-6">
+  <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Open ({{ len(open_recs) }})</h2>
+  <div class="space-y-3">
+    {% for r in open_recs %}
+    <div class="bg-slate-800 border border-amber-900/50 rounded-xl p-5">
+      <div class="flex flex-wrap items-start gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-2 mb-2">
+            <span class="badge bg-amber-900 text-amber-300">open</span>
+            <span class="text-xs text-slate-500">{{ r['created_at'][:16] if r['created_at'] else '' }}</span>
+          </div>
+          <p class="text-sm font-semibold text-white mb-1">{{ r['bottleneck'] or '—' }}</p>
+          {% if r['impact'] %}
+          <p class="text-xs text-slate-400 mb-2">Impact: {{ r['impact'] }}</p>
+          {% end %}
+          <p class="text-sm text-slate-300">{{ r['recommendation'] or '' }}</p>
+          {% if r['exact_fix'] %}
+          <div class="mt-2 bg-indigo-950/40 border border-indigo-900/30 rounded-lg px-3 py-2">
+            <p class="text-xs font-medium text-indigo-400 mb-0.5">Suggested action</p>
+            <p class="text-xs text-slate-300">{{ r['exact_fix'] }}</p>
+          </div>
+          {% end %}
+        </div>
+        <div class="flex-shrink-0">
+          <form method="POST" action="/observer/{{ r['id'] }}/resolve">
+            <button type="submit"
+                    class="text-xs bg-green-900/40 hover:bg-green-900/70 text-green-300 px-3 py-1.5 rounded-lg transition-colors">
+              ✓ Resolve
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% end %}
+  </div>
+</div>
+{% else %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-8 text-center mb-6">
+  <div class="text-2xl mb-2">✅</div>
+  <p class="text-slate-300 text-sm font-medium">No open recommendations</p>
+  <p class="text-slate-500 text-xs mt-1">Run the Observer Agent to scan the pipeline.</p>
+</div>
+{% end %}
+
+<!-- Resolved recommendations -->
+{% if resolved_recs %}
+<div>
+  <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Resolved ({{ len(resolved_recs) }})</h2>
+  <div class="space-y-2">
+    {% for r in resolved_recs %}
+    <div class="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 opacity-60">
+      <div class="flex flex-wrap items-center gap-2 mb-1">
+        <span class="badge bg-green-950 text-green-500">resolved</span>
+        <span class="text-xs text-slate-600">{{ r['created_at'][:16] if r['created_at'] else '' }}</span>
+      </div>
+      <p class="text-sm text-slate-400">{{ r['bottleneck'] or '—' }}</p>
+      <p class="text-xs text-slate-500 mt-0.5">{{ r['recommendation'] or '' }}</p>
+    </div>
+    {% end %}
+  </div>
+</div>
+{% end %}
+
+{% end %}
