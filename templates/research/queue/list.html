@@ -1,0 +1,125 @@
+{% extends "../../base.html" %}
+{% block title %}Review Queue — Research Worker{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/research" class="text-slate-400 hover:text-white text-sm">Research</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">Review Queue</h1>
+</div>
+{% end %}
+
+{% block header_actions %}
+<a href="/research/sources/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">+ Add Source</a>
+{% end %}
+
+{% block content %}
+
+<div class="mb-4 bg-amber-950/40 border border-amber-900/40 rounded-xl px-4 py-3 text-xs text-amber-300 flex items-start gap-2">
+  <span class="mt-0.5">🔒</span><span>{{ safety_notice }}</span>
+</div>
+
+<!-- Status filter tabs -->
+<div class="flex flex-wrap gap-2 mb-5">
+  {% for label, val, count_key in [
+    ('All', '', 'new'),
+    ('New', 'New', 'new'),
+    ('Approved', 'Approved', 'approved'),
+    ('Moved → Candidates', 'Moved To Candidates', 'moved'),
+    ('Rejected', 'Rejected', 'rejected'),
+    ('Duplicates', 'Duplicate', 'duplicate'),
+  ] %}
+  <a href="/research/queue{% if val %}?status={{ val }}{% end %}"
+     class="text-xs px-3 py-1.5 rounded-full border transition-colors
+            {% if status_filter == val %}bg-indigo-600 border-indigo-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+    {{ label }}
+    {% if val and counts.get(count_key, 0) %}
+    <span class="ml-1 font-bold">{{ counts.get(count_key, 0) }}</span>
+    {% end %}
+  </a>
+  {% end %}
+</div>
+
+{% if items %}
+<div class="space-y-2">
+  {% for item in items %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-start gap-3
+              {% if item['status'] in ('Rejected', 'Duplicate') %}opacity-60{% end %}">
+    <!-- Score badge -->
+    <div class="flex-shrink-0 w-12 h-12 rounded-xl flex flex-col items-center justify-center
+                {% if item['level'] == 'A' %}bg-green-900 text-green-300
+                {% elif item['level'] == 'B' %}bg-indigo-900 text-indigo-300
+                {% elif item['level'] == 'C' %}bg-amber-900 text-amber-300
+                {% else %}bg-red-950 text-red-400{% end %}">
+      <span class="text-xs font-bold">{{ item['level'] }}</span>
+      <span class="text-xs">{{ item['score'] }}</span>
+    </div>
+
+    <div class="flex-1 min-w-0">
+      <div class="flex flex-wrap items-center gap-2 mb-0.5">
+        <span class="text-sm font-semibold text-white">{{ item['name'] }}</span>
+        <span class="badge bg-slate-700 text-slate-300 text-xs">{{ item['status'] }}</span>
+        {% if item['best_role'] %}
+        <span class="text-xs text-indigo-400">{{ item['best_role'] }}</span>
+        {% end %}
+        {% if item['mission_name'] %}
+        <span class="text-xs text-slate-500">{{ item['mission_name'] }}</span>
+        {% end %}
+      </div>
+      {% if item['detected_role'] %}
+      <p class="text-xs text-slate-400">{{ item['detected_role'] }}</p>
+      {% end %}
+      {% if item['detected_language'] %}
+      <p class="text-xs text-green-400">{{ item['detected_language'] }}</p>
+      {% end %}
+      {% if item['possible_profile_url'] %}
+      <a href="{{ item['possible_profile_url'] }}" target="_blank" rel="noopener"
+         class="text-xs text-slate-500 hover:text-indigo-400 truncate block mt-0.5">
+        {{ item['possible_profile_url'] }}
+      </a>
+      {% end %}
+      {% if item['reason'] %}
+      <p class="text-xs text-slate-500 mt-1 truncate">{{ item['reason'] }}</p>
+      {% end %}
+    </div>
+
+    <div class="flex flex-col gap-1.5 flex-shrink-0">
+      <a href="/research/queue/{{ item['id'] }}"
+         class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors text-center">
+        Review
+      </a>
+      {% if item['status'] == 'New' %}
+      <form method="POST" action="/research/queue/{{ item['id'] }}/approve">
+        <button type="submit" class="w-full text-xs bg-green-900/50 hover:bg-green-900/80 text-green-300 px-3 py-1.5 rounded-lg transition-colors">
+          ✓ Approve
+        </button>
+      </form>
+      <form method="POST" action="/research/queue/{{ item['id'] }}/reject">
+        <button type="submit" class="w-full text-xs bg-red-950/50 hover:bg-red-950/80 text-red-400 px-3 py-1.5 rounded-lg transition-colors">
+          ✗ Reject
+        </button>
+      </form>
+      {% elif item['status'] == 'Approved' %}
+      <form method="POST" action="/research/queue/{{ item['id'] }}/move-to-candidates">
+        <button type="submit" class="w-full text-xs bg-emerald-900/50 hover:bg-emerald-900/80 text-emerald-300 px-3 py-1.5 rounded-lg transition-colors">
+          → Candidates
+        </button>
+      </form>
+      {% end %}
+    </div>
+  </div>
+  {% end %}
+</div>
+{% else %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
+  <p class="text-slate-400 text-sm mb-3">
+    {% if status_filter %}No candidates with status "{{ status_filter }}".
+    {% else %}Review queue is empty.{% end %}
+  </p>
+  <a href="/research/sources/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+    Add a Source
+  </a>
+</div>
+{% end %}
+
+{% end %}

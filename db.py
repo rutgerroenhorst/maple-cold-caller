@@ -1083,24 +1083,49 @@ def run_agent(agent_id: int):
 
     try:
         if atype == 'candidate_research':
+            rs = get_research_summary()
             missions = to_list(conn.execute(
                 "SELECT * FROM search_missions WHERE status='active'").fetchall())
-            total = conn.execute(
+            total_cands = conn.execute(
                 "SELECT COUNT(*) FROM cold_caller_candidates").fetchone()[0]
+
+            output = "Candidate Research Worker — Status\n\n"
+            output += f"Active missions:       {rs['active_missions']}\n"
+            output += f"Sources in inbox:      {rs['total_sources']} ({rs['unprocessed']} unprocessed)\n"
+            output += f"Review queue:          {rs['queue_total']} total\n"
+            output += f"  • New:               {rs['queue_new']}\n"
+            output += f"  • Approved:          {rs['queue_approved']}\n"
+            output += f"  • Moved→Candidates:  {rs['moved_to_candidates']}\n"
+            output += f"  • Rejected/Dupes:    {rs['queue_rejected'] + rs['queue_duplicate']}\n"
+            output += f"Pipeline candidates:   {total_cands}\n\n"
+
             if missions:
-                output = f"Active search missions: {len(missions)}\n\n"
+                output += "Active search missions:\n"
                 for m in missions:
-                    kws = [k.strip() for k in (m.get('keywords') or '').split('\n') if k.strip()][:3]
-                    output += f"▸ {m['name']} — target: {m.get('target_role') or 'any'}, daily target: {m['daily_target']}/day\n"
+                    kws = [k.strip() for k in (m.get('keywords') or '').split('\n') if k.strip()][:2]
+                    output += f"▸ {m['name']} — {m.get('target_role') or 'any role'}, {m.get('target_market','NL')}, {m['daily_target']}/day target\n"
                     if kws:
-                        q_str = '" OR "'.join(kws[:2])
-                        output += f'  Recommended query: site:linkedin.com/in ("{q_str}") {m.get("target_market","Netherlands")}\n'
-                    output += '\n'
-                output += f"Total candidates in pipeline: {total}"
-            else:
-                output = f"No active search missions found. Total candidates: {total}\nCreate a search mission first to guide sourcing."
+                        q_str = '" OR "'.join(kws)
+                        output += f'  Next query: site:linkedin.com/in ("{q_str}") "Dutch"\n'
+                output += "\n"
+
+            if rs['top_candidate']:
+                tc = rs['top_candidate']
+                output += f"Top candidate in queue: {tc['name']} — score {tc['score']} ({tc['level']}) — {tc['best_role']}\n"
+
+            # Set issue / recommendation
+            if rs['unprocessed'] > 0:
+                issue = f"{rs['unprocessed']} source(s) waiting to be processed"
+                recommendation = "Go to /research/sources and click 'Process' on each unprocessed source"
+            elif rs['queue_new'] > 0:
+                issue = f"{rs['queue_new']} candidates in queue waiting for review"
+                recommendation = "Go to /research/queue and approve or reject candidates"
+            elif not missions:
                 issue = "No active search missions"
-                recommendation = "Create at least one search mission to direct candidate sourcing"
+                recommendation = "Create a search mission at /search-missions/new"
+            else:
+                issue = ""
+                recommendation = "Generate new search queries at /research/queries and paste results into /research/sources"
 
         elif atype == 'talent_scout':
             rows = to_list(conn.execute(
@@ -1380,3 +1405,700 @@ def update_observer_recommendation(rid, data):
     conn.commit()
     conn.close()
     return rid
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Research Worker — Candidate Sources + Research Queue
+# ──────────────────────────────────────────────────────────────────────────────
+
+import re as _re
+
+def init_research_tables():
+    """Create research tables. Idempotent."""
+    conn = get_db()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS candidate_sources (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_type         TEXT NOT NULL DEFAULT 'manual_paste',
+        source_name         TEXT,
+        search_mission_id   INTEGER,
+        raw_text            TEXT,
+        source_url          TEXT,
+        processed           INTEGER DEFAULT 0,
+        created_at          TEXT DEFAULT (datetime('now')),
+        updated_at          TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS candidate_research_queue (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        search_mission_id   INTEGER,
+        candidate_source_id INTEGER,
+        name                TEXT NOT NULL DEFAULT 'Unknown Candidate',
+        possible_profile_url TEXT,
+        source              TEXT,
+        source_url          TEXT,
+        snippet             TEXT,
+        detected_role       TEXT,
+        detected_language   TEXT,
+        detected_keywords   TEXT,
+        score               INTEGER DEFAULT 0,
+        level               TEXT DEFAULT 'C',
+        best_role           TEXT,
+        best_offer_type     TEXT,
+        reason              TEXT,
+        risk                TEXT,
+        next_action         TEXT,
+        status              TEXT DEFAULT 'New',
+        notes               TEXT,
+        linked_candidate_id INTEGER,
+        created_at          TEXT DEFAULT (datetime('now')),
+        updated_at          TEXT DEFAULT (datetime('now'))
+    );
+    """)
+    conn.commit()
+    conn.close()
+
+
+# ── SCORING ────────────────────────────────────────────────────────────────────
+
+_ROLE_KEYWORDS = [
+    'cold call', 'cold caller', 'cold calling',
+    'appointment setter', 'appointment setting',
+    'sdr', 'sales development', 'outbound sales', 'outbound',
+    'closer', 'high ticket', 'high-ticket',
+    'b2b sales', 'b2b', 'telesales', 'telemarketing',
+    'inside sales', 'business development',
+]
+_DUTCH_SIGNALS = [
+    'dutch', 'dutch-speaking', 'dutch speaking',
+    'nederland', 'netherlands', 'amsterdam', 'rotterdam', 'utrecht',
+    'den haag', 'eindhoven', 'nlisch', 'nl ',
+    'nederlander', 'nederlandstalig', 'moedertaal',
+]
+_NEGATIVE_SIGNALS = [
+    'retail', 'horeca', 'waiter', 'waitress', 'bartender', 'cashier',
+    'crypto', 'mlm', 'network marketing', 'pyramid',
+]
+_REMOTE_SIGNALS = ['remote', 'thuiswerk', 'vanuit huis', 'werk op afstand', 'flexible']
+_COMMISSION_SIGNALS = ['commission', 'commissie', 'high ticket', 'high-ticket', 'closing']
+_B2B_SIGNALS = ['b2b', 'business to business', 'zakelijk', 'bedrijven']
+_ACTIVITY_SIGNALS = ['2024', '2025', '2026', 'recent', 'current', 'huidig', 'nu ']
+
+def score_research_candidate(data: dict) -> dict:
+    """Rule-based scoring. Returns score/level/role/offer/reason/risk/next_action."""
+    text = ' '.join([
+        (data.get('name') or ''),
+        (data.get('snippet') or ''),
+        (data.get('detected_role') or ''),
+        (data.get('detected_keywords') or ''),
+    ]).lower()
+
+    score = 0
+    reasons = []
+    risks = []
+
+    # Positives
+    cold_calling = any(k in text for k in ['cold call', 'cold caller', 'cold calling'])
+    appt_setting = any(k in text for k in ['appointment setter', 'appointment setting', 'sdr', 'sales development', 'outbound'])
+    is_dutch = any(k in text for k in _DUTCH_SIGNALS)
+    is_b2b = any(k in text for k in _B2B_SIGNALS)
+    is_remote = any(k in text for k in _REMOTE_SIGNALS)
+    is_commission = any(k in text for k in _COMMISSION_SIGNALS)
+    has_recent = any(k in text for k in _ACTIVITY_SIGNALS)
+    has_role = any(k in text for k in _ROLE_KEYWORDS)
+
+    if cold_calling:
+        score += 25; reasons.append('cold calling experience')
+    if appt_setting:
+        score += 20; reasons.append('appointment setting / SDR / outbound')
+    if is_dutch:
+        score += 20; reasons.append('Dutch / Nederlands signal')
+    if is_b2b:
+        score += 15; reasons.append('B2B experience')
+    if is_remote:
+        score += 15; reasons.append('remote availability')
+    if is_commission:
+        score += 10; reasons.append('commission / high-ticket / closing signal')
+    if has_recent:
+        score += 10; reasons.append('recent activity signal')
+
+    # Negatives
+    no_sales = not has_role
+    retail_only = any(k in text for k in ['retail', 'horeca', 'waiter', 'waitress', 'cashier', 'bartender'])
+    no_location = not is_dutch
+    crypto_mlm = any(k in text for k in ['crypto', 'mlm', 'network marketing', 'pyramid'])
+    vague_jobseeker = 'looking for' in text and not has_role
+
+    if no_sales:
+        score -= 30; risks.append('no sales experience detected')
+    elif retail_only:
+        score -= 20; risks.append('only retail / horeca sales')
+    if no_location:
+        score -= 20; risks.append('no Dutch / NL location match')
+    if crypto_mlm:
+        score -= 20; risks.append('crypto / MLM / network marketing signal')
+    if vague_jobseeker:
+        score -= 15; risks.append('jobseeker with no sales proof')
+
+    score = max(0, min(100, score))
+
+    # Level
+    if score >= 65:
+        level = 'A'
+    elif score >= 40:
+        level = 'B'
+    elif score >= 20:
+        level = 'C'
+    else:
+        level = 'Reject'
+
+    # Best role
+    if cold_calling:
+        best_role = 'Cold Caller'
+    elif appt_setting:
+        best_role = 'Appointment Setter'
+    elif is_commission:
+        best_role = 'Closer'
+    elif has_role:
+        best_role = 'SDR / Outbound'
+    else:
+        best_role = 'Unclear'
+
+    # Offer type
+    if is_commission:
+        best_offer_type = 'Commission / Revenue Share'
+    elif is_remote:
+        best_offer_type = 'Remote Freelance'
+    else:
+        best_offer_type = 'TBD — needs review'
+
+    # Next action
+    if level in ('A', 'B'):
+        next_action = 'Approve → move to candidates → prepare outreach message'
+    elif level == 'C':
+        next_action = 'Review manually — low-signal profile'
+    else:
+        next_action = 'Reject or archive'
+
+    return {
+        'score': score,
+        'level': level,
+        'best_role': best_role,
+        'best_offer_type': best_offer_type,
+        'reason': ', '.join(reasons) if reasons else 'No strong signals found',
+        'risk': ', '.join(risks) if risks else 'No major risks',
+        'next_action': next_action,
+    }
+
+
+# ── EXTRACTION ─────────────────────────────────────────────────────────────────
+
+_LI_URL_RE = _re.compile(r'https?://(?:www\.)?linkedin\.com/in/[\w\-]+/?', _re.IGNORECASE)
+_NAME_LINE_RE = _re.compile(r'^([A-Z][a-zÀ-ÿ\-]+(?:\s+[A-Z][a-zÀ-ÿ\-]+){1,3})\s*$', _re.MULTILINE)
+_ROLE_RE = _re.compile(
+    r'(cold call(?:er|ing)?|appointment set(?:ter|ting)|sdr|outbound sales?|'
+    r'b2b sales?|telesales?|sales development|closer|high.ticket|inside sales)',
+    _re.IGNORECASE
+)
+_DUTCH_RE = _re.compile(r'(dutch|nederland|netherlands|amsterdam|rotterdam|utrecht|'
+                         r'den haag|eindhoven|nederlandstalig|nederlander|nl\b)', _re.IGNORECASE)
+
+def _extract_linkedin_blocks(text: str) -> list:
+    """Split text into candidate blocks around LinkedIn URLs or name headings."""
+    blocks = []
+    # Split by double-newline or by LinkedIn URL boundaries
+    chunks = _re.split(r'\n{2,}', text.strip())
+    for chunk in chunks:
+        if chunk.strip():
+            blocks.append(chunk.strip())
+    return blocks
+
+def extract_candidates_from_source(source_id: int) -> list:
+    """
+    Parse raw_text from a candidate_source, extract candidate signals,
+    score them, dedupe, and insert into candidate_research_queue.
+    Returns list of created queue item ids.
+    """
+    source = get_candidate_source(source_id)
+    if not source:
+        return []
+
+    raw = source.get('raw_text', '') or ''
+    mission_id = source.get('search_mission_id')
+    source_url = source.get('source_url', '') or ''
+    source_name = source.get('source_name', '') or source.get('source_type', 'paste')
+
+    # Find all LinkedIn URLs in the text
+    li_urls = list(dict.fromkeys(_LI_URL_RE.findall(raw)))  # dedupe, preserve order
+
+    created_ids = []
+    seen_urls = set()
+    seen_names = set()
+
+    def _process_block(block, li_url=None):
+        nonlocal created_ids
+
+        # Detect role keywords
+        role_matches = _ROLE_RE.findall(block)
+        detected_role = ', '.join(dict.fromkeys(m.lower() for m in role_matches)) if role_matches else ''
+
+        # Detect Dutch signals
+        dutch_matches = _DUTCH_RE.findall(block)
+        detected_language = 'Dutch / NL' if dutch_matches else ''
+
+        # Collect all unique keyword signals
+        kw_set = set(m.lower() for m in role_matches) | set(m.lower() for m in dutch_matches)
+        detected_keywords = ', '.join(sorted(kw_set))
+
+        # Try to find a name — first line that looks like a proper name
+        name = 'Unknown Candidate'
+        for line in block.splitlines():
+            line = line.strip()
+            if _re.match(r'^[A-Z][a-zÀ-ÿ\-]+(\s+[A-Z][a-zÀ-ÿ\-]+){1,3}$', line):
+                name = line
+                break
+
+        # Use LinkedIn URL from the block if not passed in
+        if not li_url:
+            url_in_block = _LI_URL_RE.search(block)
+            li_url = url_in_block.group(0) if url_in_block else ''
+
+        # Snippet: first 300 chars of block
+        snippet = block[:300].replace('\n', ' ')
+
+        # Dedupe
+        norm_name = _re.sub(r'\s+', ' ', name.lower().strip())
+        norm_url  = (li_url or '').rstrip('/').lower()
+
+        existing = dedupe_research_candidate(name=norm_name, profile_url=norm_url)
+        if existing:
+            return  # duplicate — skip
+
+        if norm_url and norm_url in seen_urls:
+            return
+        if norm_name != 'unknown candidate' and norm_name in seen_names:
+            return
+        if norm_url:
+            seen_urls.add(norm_url)
+        if norm_name != 'unknown candidate':
+            seen_names.add(norm_name)
+
+        candidate_data = {
+            'name': name,
+            'possible_profile_url': li_url,
+            'snippet': snippet,
+            'detected_role': detected_role,
+            'detected_language': detected_language,
+            'detected_keywords': detected_keywords,
+        }
+        scored = score_research_candidate(candidate_data)
+
+        item = {
+            'search_mission_id': mission_id,
+            'candidate_source_id': source_id,
+            'name': name,
+            'possible_profile_url': li_url,
+            'source': source_name,
+            'source_url': source_url,
+            'snippet': snippet,
+            'detected_role': detected_role,
+            'detected_language': detected_language,
+            'detected_keywords': detected_keywords,
+            'status': 'New',
+            **scored,
+        }
+        qid = create_research_queue_item(item)
+        created_ids.append(qid)
+
+    # Strategy 1: if there are LinkedIn URLs, each URL anchors a block
+    if li_urls:
+        for url in li_urls:
+            # Find the text around the URL (100 chars before, 500 after)
+            idx = raw.find(url)
+            if idx == -1:
+                continue
+            context_start = max(0, idx - 150)
+            context_end   = min(len(raw), idx + 600)
+            block = raw[context_start:context_end]
+            _process_block(block, li_url=url)
+    else:
+        # Strategy 2: split into blocks and process each
+        blocks = _extract_linkedin_blocks(raw)
+        for block in blocks:
+            if len(block.strip()) < 20:
+                continue
+            _process_block(block)
+
+    # If nothing extracted but raw_text is non-empty, store as single unknown
+    if not created_ids and raw.strip():
+        _process_block(raw[:800])
+
+    # Mark source as processed
+    update_candidate_source(source_id, {'processed': 1})
+    return created_ids
+
+
+# ── CANDIDATE SOURCES CRUD ─────────────────────────────────────────────────────
+
+def create_candidate_source(data: dict) -> int:
+    conn = get_db()
+    cur = conn.execute(
+        """INSERT INTO candidate_sources
+           (source_type, source_name, search_mission_id, raw_text, source_url, processed)
+           VALUES (?,?,?,?,?,?)""",
+        (data.get('source_type', 'manual_paste'),
+         data.get('source_name', ''),
+         data.get('search_mission_id'),
+         data.get('raw_text', ''),
+         data.get('source_url', ''),
+         0)
+    )
+    conn.commit()
+    sid = cur.lastrowid
+    conn.close()
+    return sid
+
+
+def get_candidate_sources(mission_id=None, processed=None) -> list:
+    conn = get_db()
+    q = "SELECT cs.*, sm.name as mission_name FROM candidate_sources cs LEFT JOIN search_missions sm ON cs.search_mission_id=sm.id WHERE 1=1"
+    args = []
+    if mission_id is not None:
+        q += " AND cs.search_mission_id=?"
+        args.append(mission_id)
+    if processed is not None:
+        q += " AND cs.processed=?"
+        args.append(processed)
+    q += " ORDER BY cs.created_at DESC"
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def get_candidate_source(sid: int) -> dict:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT cs.*, sm.name as mission_name FROM candidate_sources cs LEFT JOIN search_missions sm ON cs.search_mission_id=sm.id WHERE cs.id=?",
+        (sid,)
+    ).fetchone()
+    conn.close()
+    return to_dict(row)
+
+
+def update_candidate_source(sid: int, data: dict):
+    conn = get_db()
+    fields = ['source_type', 'source_name', 'search_mission_id', 'raw_text', 'source_url', 'processed']
+    sets = []
+    vals = []
+    for f in fields:
+        if f in data:
+            sets.append(f"{f}=?")
+            vals.append(data[f])
+    if not sets:
+        conn.close()
+        return
+    sets.append("updated_at=datetime('now')")
+    vals.append(sid)
+    conn.execute(f"UPDATE candidate_sources SET {', '.join(sets)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+# ── RESEARCH QUEUE CRUD ────────────────────────────────────────────────────────
+
+_RQ_FIELDS = [
+    'search_mission_id', 'candidate_source_id', 'name', 'possible_profile_url',
+    'source', 'source_url', 'snippet', 'detected_role', 'detected_language',
+    'detected_keywords', 'score', 'level', 'best_role', 'best_offer_type',
+    'reason', 'risk', 'next_action', 'status', 'notes', 'linked_candidate_id',
+]
+
+def create_research_queue_item(data: dict) -> int:
+    conn = get_db()
+    cols = [f for f in _RQ_FIELDS if f in data]
+    placeholders = ','.join('?' * len(cols))
+    vals = [data[c] for c in cols]
+    cur = conn.execute(
+        f"INSERT INTO candidate_research_queue ({', '.join(cols)}) VALUES ({placeholders})",
+        vals
+    )
+    conn.commit()
+    rid = cur.lastrowid
+    conn.close()
+    return rid
+
+
+def get_research_queue(status=None, mission_id=None, source_id=None) -> list:
+    conn = get_db()
+    q = """SELECT rq.*, sm.name as mission_name
+           FROM candidate_research_queue rq
+           LEFT JOIN search_missions sm ON rq.search_mission_id=sm.id
+           WHERE 1=1"""
+    args = []
+    if status:
+        if isinstance(status, list):
+            placeholders = ','.join('?' * len(status))
+            q += f" AND rq.status IN ({placeholders})"
+            args.extend(status)
+        else:
+            q += " AND rq.status=?"
+            args.append(status)
+    if mission_id is not None:
+        q += " AND rq.search_mission_id=?"
+        args.append(mission_id)
+    if source_id is not None:
+        q += " AND rq.candidate_source_id=?"
+        args.append(source_id)
+    q += " ORDER BY rq.score DESC, rq.created_at DESC"
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def get_research_queue_item(rid: int) -> dict:
+    conn = get_db()
+    row = conn.execute(
+        """SELECT rq.*, sm.name as mission_name
+           FROM candidate_research_queue rq
+           LEFT JOIN search_missions sm ON rq.search_mission_id=sm.id
+           WHERE rq.id=?""",
+        (rid,)
+    ).fetchone()
+    conn.close()
+    return to_dict(row)
+
+
+def update_research_queue_item(rid: int, data: dict):
+    conn = get_db()
+    sets = []
+    vals = []
+    for f in _RQ_FIELDS:
+        if f in data:
+            sets.append(f"{f}=?")
+            vals.append(data[f])
+    if not sets:
+        conn.close()
+        return
+    sets.append("updated_at=datetime('now')")
+    vals.append(rid)
+    conn.execute(f"UPDATE candidate_research_queue SET {', '.join(sets)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def approve_research_candidate(rid: int):
+    update_research_queue_item(rid, {'status': 'Approved'})
+
+
+def reject_research_candidate(rid: int):
+    update_research_queue_item(rid, {'status': 'Rejected'})
+
+
+def mark_research_duplicate(rid: int):
+    update_research_queue_item(rid, {'status': 'Duplicate'})
+
+
+def dedupe_research_candidate(name: str, profile_url: str,
+                               phone: str = None, email: str = None) -> int:
+    """Return existing research queue item id if duplicate, else None."""
+    conn = get_db()
+    # Check by profile URL first (most reliable)
+    if profile_url and profile_url.strip():
+        norm = profile_url.rstrip('/').lower()
+        row = conn.execute(
+            "SELECT id FROM candidate_research_queue WHERE lower(trim(possible_profile_url, '/'))=? LIMIT 1",
+            (norm,)
+        ).fetchone()
+        if row:
+            conn.close()
+            return row[0]
+
+    # Check by normalized name
+    if name and name.lower() != 'unknown candidate':
+        norm_name = _re.sub(r'\s+', ' ', name.lower().strip())
+        row = conn.execute(
+            "SELECT id FROM candidate_research_queue WHERE lower(trim(name))=? LIMIT 1",
+            (norm_name,)
+        ).fetchone()
+        if row:
+            conn.close()
+            return row[0]
+
+    # Also check candidates table by LinkedIn URL
+    if profile_url and profile_url.strip():
+        norm = profile_url.rstrip('/').lower()
+        row = conn.execute(
+            "SELECT id FROM cold_caller_candidates WHERE lower(trim(profile_url, '/'))=? LIMIT 1",
+            (norm,)
+        ).fetchone()
+        if row:
+            conn.close()
+            return row[0]
+
+    conn.close()
+    return None
+
+
+def move_research_candidate_to_candidates(rid: int) -> int:
+    """
+    Create a cold_caller_candidate from an approved research queue item.
+    Returns the new candidate id.
+    """
+    item = get_research_queue_item(rid)
+    if not item:
+        return None
+
+    notes_parts = []
+    if item.get('reason'):
+        notes_parts.append(f"Signals: {item['reason']}")
+    if item.get('risk'):
+        notes_parts.append(f"Risk: {item['risk']}")
+    if item.get('next_action'):
+        notes_parts.append(f"Next action: {item['next_action']}")
+    if item.get('notes'):
+        notes_parts.append(f"Notes: {item['notes']}")
+    combined_notes = ' | '.join(notes_parts)
+
+    candidate_data = {
+        'full_name': item.get('name', 'Unknown'),
+        'profile_url': item.get('possible_profile_url', ''),
+        'platform_source': item.get('source', 'Research Worker'),
+        'current_role': item.get('detected_role', ''),
+        'language_level': 'Dutch' if 'dutch' in (item.get('detected_language') or '').lower() else '',
+        'global_score': item.get('score', 0),
+        'status': 'found',
+        'notes': combined_notes,
+        # email/phone not available at research stage
+        'email': '',
+        'phone': '',
+        'past_sales_roles': item.get('best_role', ''),
+        'cold_calling_experience': 'yes' if 'cold call' in (item.get('detected_role') or '').lower() else '',
+        'appointment_setting_experience': 'yes' if 'appointment' in (item.get('detected_role') or '').lower() else '',
+        'b2b_experience': 'yes' if 'b2b' in (item.get('detected_keywords') or '').lower() else '',
+        'availability': 'remote' if item.get('best_offer_type') and 'remote' in item['best_offer_type'].lower() else '',
+        'commission_only_fit': 'yes' if item.get('best_offer_type') and 'commission' in item['best_offer_type'].lower() else '',
+        'proof_results': '',
+        'voice_sample_url': '',
+        'd2d_experience': '',
+        'gatekeeper_experience': '',
+        'ai_score_raw': '',
+    }
+
+    cid = create_candidate(candidate_data)
+    update_research_queue_item(rid, {
+        'status': 'Moved To Candidates',
+        'linked_candidate_id': cid,
+    })
+    return cid
+
+
+# ── QUERY BUILDER ──────────────────────────────────────────────────────────────
+
+def generate_search_queries(mission: dict) -> list:
+    """
+    Generate safe, non-automated search queries for a search mission.
+    Returns list of {type, query, description} dicts.
+    """
+    lang = mission.get('target_language') or 'Dutch'
+    market = mission.get('target_market') or 'Netherlands'
+    role = mission.get('target_role') or 'Cold Caller'
+    keywords_raw = mission.get('keywords') or ''
+    kws = [k.strip() for k in keywords_raw.splitlines() if k.strip()]
+
+    lang_lower = lang.lower()
+    is_dutch = 'dutch' in lang_lower or 'nl' in lang_lower or 'neder' in lang_lower
+
+    loc_terms = '"Nederland"' if is_dutch else f'"{market}"'
+    lang_terms = '("Dutch" OR "Nederlands" OR "Nederlandstalig")' if is_dutch else f'"{lang}"'
+    role_terms_map = {
+        'cold caller':          '("cold caller" OR "cold calling" OR "cold call")',
+        'appointment setter':   '("appointment setter" OR "appointment setting" OR "SDR")',
+        'closer':               '("closer" OR "high ticket" OR "high-ticket closing")',
+    }
+    role_key = role.lower()
+    role_q = next((v for k, v in role_terms_map.items() if k in role_key),
+                  '("cold caller" OR "appointment setter" OR "SDR")')
+
+    queries = []
+
+    # 1. Google indexed LinkedIn
+    queries.append({
+        'type': 'google_linkedin',
+        'label': 'Google → LinkedIn indexed',
+        'query': f'site:linkedin.com/in {role_q} {lang_terms}',
+        'description': 'Paste into Google. Results are public LinkedIn profiles indexed by Google.',
+    })
+
+    # 2. Google Alert phrase
+    queries.append({
+        'type': 'google_alert',
+        'label': 'Google Alert phrase',
+        'query': f'"{role.lower()}" "{lang_lower}" remote',
+        'description': 'Set this as a Google Alert to receive new matches by email.',
+    })
+
+    # 3. LinkedIn manual search (for human to enter in LinkedIn search bar)
+    queries.append({
+        'type': 'linkedin_manual',
+        'label': 'LinkedIn manual search (paste into LinkedIn)',
+        'query': f'{role} {lang} remote',
+        'description': 'Paste into LinkedIn People search bar. Filter by location: Netherlands.',
+    })
+
+    # 4. Community referral phrase
+    queries.append({
+        'type': 'community_referral',
+        'label': 'Community / referral post',
+        'query': f'Looking for a {lang}-speaking {role.lower()} with B2B experience. Remote. Commission-based. DM me.',
+        'description': 'Post in relevant Facebook groups, Slack communities, WhatsApp sales groups.',
+    })
+
+    # 5. Google broad search
+    queries.append({
+        'type': 'google_broad',
+        'label': 'Google broad search',
+        'query': f'"{role.lower()}" "{market}" "remote" site:freelancer.nl OR site:upwork.com OR site:linkedin.com',
+        'description': 'Broad Google search across freelance platforms.',
+    })
+
+    # 6. Custom keyword queries from the mission
+    for kw in kws[:4]:
+        queries.append({
+            'type': 'keyword',
+            'label': f'Keyword: {kw}',
+            'query': f'"{kw}" {loc_terms} {lang_terms}',
+            'description': f'Custom keyword query from mission: {kw}',
+        })
+
+    return queries
+
+
+# ── RESEARCH AGENT SUMMARY ─────────────────────────────────────────────────────
+
+def get_research_summary() -> dict:
+    """Summary counts for the research dashboard and agent output."""
+    conn = get_db()
+    def _count(q, *args):
+        return conn.execute(q, args).fetchone()[0]
+
+    d = {
+        'total_sources':      _count("SELECT COUNT(*) FROM candidate_sources"),
+        'unprocessed':        _count("SELECT COUNT(*) FROM candidate_sources WHERE processed=0"),
+        'queue_total':        _count("SELECT COUNT(*) FROM candidate_research_queue"),
+        'queue_new':          _count("SELECT COUNT(*) FROM candidate_research_queue WHERE status='New'"),
+        'queue_needs_review': _count("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Needs Review'"),
+        'queue_approved':     _count("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Approved'"),
+        'queue_rejected':     _count("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Rejected'"),
+        'queue_duplicate':    _count("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Duplicate'"),
+        'moved_to_candidates':_count("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Moved To Candidates'"),
+        'active_missions':    _count("SELECT COUNT(*) FROM search_missions WHERE status='active'"),
+    }
+
+    # Top candidate in queue
+    top = conn.execute(
+        "SELECT * FROM candidate_research_queue WHERE status NOT IN ('Rejected','Duplicate') ORDER BY score DESC LIMIT 1"
+    ).fetchone()
+    d['top_candidate'] = to_dict(top)
+
+    conn.close()
+    return d

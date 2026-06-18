@@ -782,6 +782,137 @@ class DailyDashboardHandler(Base):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Research Worker Handlers
+# ──────────────────────────────────────────────────────────────────────────────
+
+_SAFETY_NOTICE = (
+    "This worker does not send LinkedIn messages, connection requests, comments or likes. "
+    "It only prepares research and review queues. Human approval is required for outreach."
+)
+
+
+class ResearchDashboardHandler(Base):
+    def get(self):
+        rs = db.get_research_summary()
+        missions = db.get_search_missions(status='active')
+        # find candidate_research agent
+        agents = db.get_agents()
+        cr_agent = next((a for a in agents if a.get('type') == 'candidate_research'), None)
+        self.render("research/dashboard.html",
+                    rs=rs, missions=missions, cr_agent=cr_agent,
+                    safety_notice=_SAFETY_NOTICE, page='research')
+
+
+class ResearchSourceListHandler(Base):
+    def get(self):
+        sources = db.get_candidate_sources()
+        missions = db.get_search_missions()
+        self.render("research/sources/list.html",
+                    sources=sources, missions=missions,
+                    safety_notice=_SAFETY_NOTICE, page='research')
+
+
+class ResearchSourceNewHandler(Base):
+    def get(self):
+        missions = db.get_search_missions()
+        self.render("research/sources/new.html",
+                    missions=missions, safety_notice=_SAFETY_NOTICE, page='research')
+
+    def post(self):
+        data = {
+            'source_type': self.get_argument('source_type', 'manual_paste'),
+            'source_name': self.get_argument('source_name', ''),
+            'search_mission_id': self.get_argument('search_mission_id', None) or None,
+            'source_url':  self.get_argument('source_url', ''),
+            'raw_text':    self.get_argument('raw_text', ''),
+        }
+        if data['search_mission_id']:
+            data['search_mission_id'] = int(data['search_mission_id'])
+        sid = db.create_candidate_source(data)
+        self.redirect(f'/research/sources/{sid}')
+
+
+class ResearchSourceDetailHandler(Base):
+    def get(self, sid):
+        source = db.get_candidate_source(int(sid))
+        if not source:
+            self.send_error(404); return
+        queue_items = db.get_research_queue(source_id=int(sid))
+        self.render("research/sources/detail.html",
+                    source=source, queue_items=queue_items,
+                    safety_notice=_SAFETY_NOTICE, page='research')
+
+
+class ResearchSourceProcessHandler(Base):
+    def post(self, sid):
+        ids = db.extract_candidates_from_source(int(sid))
+        self.redirect(f'/research/sources/{sid}')
+
+
+class ResearchQueueListHandler(Base):
+    def get(self):
+        status_filter = self.get_argument('status', '')
+        items = db.get_research_queue(status=status_filter if status_filter else None)
+        counts = {
+            'new':      len([i for i in db.get_research_queue(status='New')]),
+            'approved': len([i for i in db.get_research_queue(status='Approved')]),
+            'rejected': len([i for i in db.get_research_queue(status='Rejected')]),
+            'moved':    len([i for i in db.get_research_queue(status='Moved To Candidates')]),
+            'duplicate':len([i for i in db.get_research_queue(status='Duplicate')]),
+        }
+        self.render("research/queue/list.html",
+                    items=items, counts=counts, status_filter=status_filter,
+                    safety_notice=_SAFETY_NOTICE, page='research')
+
+
+class ResearchQueueDetailHandler(Base):
+    def get(self, rid):
+        item = db.get_research_queue_item(int(rid))
+        if not item:
+            self.send_error(404); return
+        self.render("research/queue/detail.html",
+                    item=item, safety_notice=_SAFETY_NOTICE, page='research')
+
+    def post(self, rid):
+        notes = self.get_argument('notes', None)
+        if notes is not None:
+            db.update_research_queue_item(int(rid), {'notes': notes})
+        self.redirect(f'/research/queue/{rid}')
+
+
+class ResearchQueueApproveHandler(Base):
+    def post(self, rid):
+        db.approve_research_candidate(int(rid))
+        self.redirect(f'/research/queue/{rid}')
+
+
+class ResearchQueueRejectHandler(Base):
+    def post(self, rid):
+        db.reject_research_candidate(int(rid))
+        self.redirect('/research/queue')
+
+
+class ResearchQueueMoveHandler(Base):
+    def post(self, rid):
+        cid = db.move_research_candidate_to_candidates(int(rid))
+        if cid:
+            self.redirect(f'/candidates/{cid}')
+        else:
+            self.redirect(f'/research/queue/{rid}')
+
+
+class ResearchQueriesHandler(Base):
+    def get(self):
+        missions = db.get_search_missions()
+        queries_by_mission = {}
+        for m in missions:
+            queries_by_mission[m['id']] = db.generate_search_queries(m)
+        self.render("research/queries.html",
+                    missions=missions, queries_by_mission=queries_by_mission,
+                    safety_notice=_SAFETY_NOTICE, page='research')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # App factory
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -789,6 +920,7 @@ def make_app():
     db.init_db()
     db.migrate_phase2()
     db.init_agents_tables()
+    db.init_research_tables()
     # Derive cookie secret from password (or use env override); never empty
     _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
     cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
@@ -855,6 +987,18 @@ def make_app():
         (r"/search-missions/([0-9]+)/pause",    SearchMissionPauseHandler),
         (r"/observer",                          ObserverHandler),
         (r"/observer/([0-9]+)/resolve",         ObserverResolveHandler),
+        # Research Worker
+        (r"/research",                                          ResearchDashboardHandler),
+        (r"/research/sources",                                  ResearchSourceListHandler),
+        (r"/research/sources/new",                              ResearchSourceNewHandler),
+        (r"/research/sources/([0-9]+)",                         ResearchSourceDetailHandler),
+        (r"/research/sources/([0-9]+)/process",                 ResearchSourceProcessHandler),
+        (r"/research/queue",                                    ResearchQueueListHandler),
+        (r"/research/queue/([0-9]+)",                           ResearchQueueDetailHandler),
+        (r"/research/queue/([0-9]+)/approve",                   ResearchQueueApproveHandler),
+        (r"/research/queue/([0-9]+)/reject",                    ResearchQueueRejectHandler),
+        (r"/research/queue/([0-9]+)/move-to-candidates",        ResearchQueueMoveHandler),
+        (r"/research/queries",                                  ResearchQueriesHandler),
     ], **settings)
 
 

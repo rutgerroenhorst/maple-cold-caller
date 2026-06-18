@@ -1,0 +1,83 @@
+{% extends "../base.html" %}
+{% block title %}Query Builder — Research Worker{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/research" class="text-slate-400 hover:text-white text-sm">Research</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">Query Builder</h1>
+</div>
+{% end %}
+
+{% block header_actions %}
+<a href="/research/sources/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + Add Source
+</a>
+{% end %}
+
+{% block content %}
+
+<!-- Safety notice -->
+<div class="mb-5 bg-amber-950/40 border border-amber-900/40 rounded-xl px-4 py-3 text-xs text-amber-300 flex items-start gap-2">
+  <span class="text-base mt-0.5">🔒</span>
+  <span>{{ safety_notice }}</span>
+</div>
+
+<p class="text-sm text-slate-400 mb-5">
+  Copy these queries into Google, LinkedIn search, or Google Alerts. Do not automate. Paste the results into <a href="/research/sources/new" class="text-indigo-400 hover:text-indigo-300">Source Inbox</a>.
+</p>
+
+{% if not missions %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-8 text-center">
+  <p class="text-slate-400 text-sm mb-3">No search missions yet.</p>
+  <a href="/search-missions/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">Create a Search Mission</a>
+</div>
+{% end %}
+
+{% for m in missions %}
+<div class="mb-6 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  <!-- Mission header -->
+  <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+    <div>
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold text-white">{{ m['name'] }}</span>
+        {% if m['status'] == 'active' %}
+        <span class="badge bg-green-900 text-green-300">active</span>
+        {% else %}
+        <span class="badge bg-amber-900 text-amber-300">{{ m['status'] }}</span>
+        {% end %}
+      </div>
+      <p class="text-xs text-slate-500 mt-0.5">{{ m.get('target_role') or 'Any role' }} · {{ m.get('target_market') or 'NL' }} · {{ m.get('target_language') or 'Dutch' }}</p>
+    </div>
+    <a href="/research/sources/new" class="text-xs bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg transition-colors">Paste results →</a>
+  </div>
+
+  <!-- Queries -->
+  <div class="divide-y divide-slate-700">
+    {% for q in queries_by_mission.get(m['id'], []) %}
+    <div class="px-5 py-3 flex items-start gap-3" x-data="{ copied: false }">
+      <div class="flex-1 min-w-0">
+        <p class="text-xs font-medium text-slate-400 mb-1">{{ q['label'] }}</p>
+        <code class="text-sm text-indigo-200 bg-slate-900 px-3 py-2 rounded-lg block break-all font-mono">{{ q['query'] }}</code>
+        <p class="text-xs text-slate-500 mt-1.5">{{ q['description'] }}</p>
+      </div>
+      <div class="flex flex-col gap-1.5 flex-shrink-0 mt-5">
+        <button onclick="copyText('{{ q['query'].replace("'", "\\'") }}', this)"
+                class="copy-btn text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap">
+          Copy
+        </button>
+        {% if q['type'] in ('google_linkedin', 'google_broad', 'google_alert') %}
+        <a href="https://www.google.com/search?q={{ q['query'] }}"
+           target="_blank" rel="noopener noreferrer"
+           class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1.5 rounded-lg transition-colors text-center">
+          Open ↗
+        </a>
+        {% end %}
+      </div>
+    </div>
+    {% end %}
+  </div>
+</div>
+{% end %}
+
+{% end %}

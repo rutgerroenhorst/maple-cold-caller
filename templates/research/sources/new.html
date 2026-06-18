@@ -1,0 +1,86 @@
+{% extends "../../base.html" %}
+{% block title %}Add Source — Research Worker{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/research" class="text-slate-400 hover:text-white text-sm">Research</a>
+  <span class="text-slate-600">/</span>
+  <a href="/research/sources" class="text-slate-400 hover:text-white text-sm">Sources</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">Add Source</h1>
+</div>
+{% end %}
+
+{% block content %}
+
+<div class="mb-5 bg-amber-950/40 border border-amber-900/40 rounded-xl px-4 py-3 text-xs text-amber-300 flex items-start gap-2">
+  <span class="text-base mt-0.5">🔒</span>
+  <span>{{ safety_notice }}</span>
+</div>
+
+<div class="max-w-2xl">
+  <form method="POST" action="/research/sources/new" class="space-y-5">
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Source Details</h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Source Type</label>
+          <select name="source_type" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="manual_paste">Manual paste (Google / LinkedIn results)</option>
+            <option value="google_alert">Google Alert email text</option>
+            <option value="linkedin_post">LinkedIn post / comment (manually copied)</option>
+            <option value="referral_note">Referral note</option>
+            <option value="csv_rows">CSV-style rows</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Search Mission (optional)</label>
+          <select name="search_mission_id" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for m in missions %}
+            <option value="{{ m['id'] }}">{{ m['name'] }}</option>
+            {% end %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Source Name</label>
+        <input type="text" name="source_name"
+               placeholder="e.g. Google search: cold caller Netherlands 2024"
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Source URL (optional)</label>
+        <input type="url" name="source_url"
+               placeholder="https://google.com/search?q=..."
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"/>
+      </div>
+    </div>
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
+      <h2 class="font-semibold text-white text-sm border-b border-slate-700 pb-3">Raw Text</h2>
+      <p class="text-xs text-slate-500">
+        Paste anything: Google search result text, LinkedIn profile snippets, Google Alert email, referral notes.
+        The worker will extract names, LinkedIn URLs, roles and keywords automatically.
+      </p>
+      <textarea name="raw_text" rows="14" required
+                placeholder="Jan de Vries&#10;https://linkedin.com/in/jandevries&#10;Cold Caller | B2B Sales | Remote | Netherlands&#10;&#10;Thomas Bakker — Appointment Setter | SDR | Dutch | Amsterdam&#10;linkedin.com/in/thomasbakker&#10;..."
+                class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"></textarea>
+    </div>
+
+    <div class="flex gap-3">
+      <button type="submit"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+        Save &amp; Process
+      </button>
+      <a href="/research/sources" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">Cancel</a>
+    </div>
+  </form>
+</div>
+
+{% end %}

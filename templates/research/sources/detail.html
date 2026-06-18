@@ -1,0 +1,144 @@
+{% extends "../../base.html" %}
+{% block title %}Source: {{ source['source_name'] or 'Unnamed' }} — Research Worker{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/research" class="text-slate-400 hover:text-white text-sm">Research</a>
+  <span class="text-slate-600">/</span>
+  <a href="/research/sources" class="text-slate-400 hover:text-white text-sm">Sources</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white truncate">{{ source['source_name'] or 'Unnamed source' }}</h1>
+</div>
+{% end %}
+
+{% block header_actions %}
+{% if not source['processed'] %}
+<form method="POST" action="/research/sources/{{ source['id'] }}/process">
+  <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+    ▶ Extract Candidates
+  </button>
+</form>
+{% end %}
+{% end %}
+
+{% block content %}
+
+<div class="mb-4 bg-amber-950/40 border border-amber-900/40 rounded-xl px-4 py-3 text-xs text-amber-300 flex items-start gap-2">
+  <span class="mt-0.5">🔒</span><span>{{ safety_notice }}</span>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+  <!-- Left: source details -->
+  <div class="lg:col-span-2 space-y-4">
+
+    <!-- Meta -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="badge bg-slate-700 text-slate-300">{{ source['source_type'] }}</span>
+        {% if source['processed'] %}
+        <span class="badge bg-green-900 text-green-300">processed</span>
+        {% else %}
+        <span class="badge bg-amber-900 text-amber-300">unprocessed</span>
+        {% end %}
+        {% if source['mission_name'] %}
+        <span class="badge bg-indigo-900 text-indigo-300">{{ source['mission_name'] }}</span>
+        {% end %}
+        <span class="text-xs text-slate-500 ml-auto">{{ source['created_at'][:16] if source['created_at'] else '' }}</span>
+      </div>
+      {% if source['source_url'] %}
+      <p class="text-xs text-slate-500 mb-3">URL: <a href="{{ source['source_url'] }}" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 break-all">{{ source['source_url'] }}</a></p>
+      {% end %}
+      <div class="bg-slate-900 rounded-lg p-4">
+        <p class="text-xs font-semibold text-slate-400 mb-2">Raw Text</p>
+        <pre class="text-xs text-slate-300 whitespace-pre-wrap font-mono max-h-80 overflow-y-auto">{{ source['raw_text'] or '(empty)' }}</pre>
+      </div>
+    </div>
+
+    <!-- Extracted candidates -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+          Extracted Candidates ({{ len(queue_items) }})
+        </p>
+        {% if not source['processed'] and not queue_items %}
+        <form method="POST" action="/research/sources/{{ source['id'] }}/process">
+          <button type="submit" class="text-xs bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg transition-colors">
+            Extract Now
+          </button>
+        </form>
+        {% end %}
+      </div>
+      {% if queue_items %}
+      <div class="divide-y divide-slate-700">
+        {% for item in queue_items %}
+        <div class="px-5 py-4 flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-2 mb-1">
+              <span class="text-sm font-medium text-white">{{ item['name'] }}</span>
+              <span class="badge {% if item['level'] == 'A' %}bg-green-900 text-green-300{% elif item['level'] == 'B' %}bg-indigo-900 text-indigo-300{% elif item['level'] == 'C' %}bg-amber-900 text-amber-300{% else %}bg-red-950 text-red-400{% end %}">
+                {{ item['level'] }} · {{ item['score'] }}
+              </span>
+              <span class="badge bg-slate-700 text-slate-300">{{ item['status'] }}</span>
+            </div>
+            {% if item['detected_role'] %}
+            <p class="text-xs text-indigo-400">{{ item['detected_role'] }}</p>
+            {% end %}
+            {% if item['possible_profile_url'] %}
+            <a href="{{ item['possible_profile_url'] }}" target="_blank" rel="noopener"
+               class="text-xs text-slate-500 hover:text-indigo-400 truncate block">
+              {{ item['possible_profile_url'] }}
+            </a>
+            {% end %}
+          </div>
+          <a href="/research/queue/{{ item['id'] }}"
+             class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors flex-shrink-0">
+            Review →
+          </a>
+        </div>
+        {% end %}
+      </div>
+      {% else %}
+      <div class="px-5 py-6 text-center text-slate-500 text-sm">
+        {% if source['processed'] %}
+        No candidates extracted from this source.
+        {% else %}
+        Click "Extract Candidates" to process this source.
+        {% end %}
+      </div>
+      {% end %}
+    </div>
+
+  </div>
+
+  <!-- Right: quick actions -->
+  <div class="space-y-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
+      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-700 pb-2">Actions</p>
+      {% if not source['processed'] %}
+      <form method="POST" action="/research/sources/{{ source['id'] }}/process">
+        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          ▶ Extract Candidates
+        </button>
+      </form>
+      {% else %}
+      <p class="text-xs text-green-400">✓ Already processed</p>
+      <form method="POST" action="/research/sources/{{ source['id'] }}/process">
+        <button type="submit" class="w-full bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+          Re-process
+        </button>
+      </form>
+      {% end %}
+      <a href="/research/queue?source={{ source['id'] }}"
+         class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+        View in Queue
+      </a>
+      <a href="/research/sources/new"
+         class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+        + Add Another Source
+      </a>
+    </div>
+  </div>
+</div>
+
+{% end %}
