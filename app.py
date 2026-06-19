@@ -274,8 +274,21 @@ class CandidateDetailHandler(Base):
         outreach = [o for o in outreach if o['candidate_id'] == int(cid)]
         interviews = db.get_interview_queue()
         interviews = [i for i in interviews if i['candidate_id'] == int(cid)]
-        self.render("candidates/detail.html", candidate=candidate, match_scores=match_scores,
-                    outreach=outreach, interviews=interviews, page='candidates')
+        # Related tasks + source context (Loop 4)
+        all_tasks     = db.get_candidate_tasks(int(cid))
+        _inactive     = {'Completed', 'Rejected'}
+        open_tasks    = [t for t in all_tasks if t.get('status') not in _inactive]
+        done_tasks    = [t for t in all_tasks if t.get('status') in _inactive][:3]
+        source_context = db.get_candidate_source_context(int(cid))
+        self.render("candidates/detail.html",
+                    candidate=candidate,
+                    match_scores=match_scores,
+                    outreach=outreach,
+                    interviews=interviews,
+                    open_tasks=open_tasks,
+                    done_tasks=done_tasks,
+                    source_context=source_context,
+                    page='candidates')
 
 
 class CandidateEditHandler(Base):
@@ -803,20 +816,37 @@ _MANUAL_SAFE_NOTICE = (
 
 class TaskListHandler(Base):
     def get(self):
+        import datetime as _datetime_mod
         status_filter   = self.get_argument('status', '')
         priority_filter = self.get_argument('priority', '')
-        type_filter     = self.get_argument('type', '')
-        related_filter  = self.get_argument('related', '')
+        type_filter     = self.get_argument('task_type', '') or self.get_argument('type', '')
+        related_filter  = self.get_argument('related_type', '') or self.get_argument('related', '')
+        due_filter      = self.get_argument('due', '')  # overdue | today | upcoming
+
+        # Build db call args
+        overdue_only = due_filter == 'overdue'
+        due_today_only = due_filter == 'today'
 
         items = db.get_action_tasks(
             status=status_filter or None,
             priority=priority_filter or None,
             task_type=type_filter or None,
             related_type=related_filter or None,
+            overdue_only=overdue_only,
+            due_today=due_today_only,
         )
-        summary = db.get_action_task_summary()
-        overdue = db.get_overdue_tasks()
+
+        # For "upcoming": filter in Python (tasks with future due dates, active)
+        if due_filter == 'upcoming':
+            today_str = _datetime_mod.date.today().isoformat()
+            items = [t for t in db.get_action_tasks()
+                     if t.get('due_date') and t['due_date'] > today_str
+                     and t.get('status') not in ('Completed', 'Rejected')]
+
+        summary   = db.get_action_task_summary()
+        overdue   = db.get_overdue_tasks()
         due_today = db.get_due_tasks()
+        today_str = _datetime_mod.date.today().isoformat()
 
         self.render("tasks/list.html",
                     items=items, summary=summary,
@@ -825,6 +855,8 @@ class TaskListHandler(Base):
                     priority_filter=priority_filter,
                     type_filter=type_filter,
                     related_filter=related_filter,
+                    due_filter=due_filter,
+                    today=today_str,
                     manual_safe_notice=_MANUAL_SAFE_NOTICE,
                     page='tasks')
 
@@ -843,6 +875,52 @@ class TaskDetailHandler(Base):
         notes = self.get_argument('notes', None)
         if notes is not None:
             db.update_action_task(int(tid), {'notes': notes})
+        self.redirect(f'/tasks/{tid}')
+
+
+class TaskNewHandler(Base):
+    def get(self):
+        related_id   = self.get_argument('related_id', '') or None
+        related_type = self.get_argument('related_type', '') or None
+        # Look up name for display in the form banner (Bug 3 fix)
+        related_name = None
+        if related_type == 'candidate' and related_id:
+            try:
+                c = db.get_candidate(int(related_id))
+                if c:
+                    related_name = c.get('full_name')
+            except Exception:
+                pass
+        self.render('tasks/new.html', page='tasks',
+                    related_id=related_id, related_type=related_type,
+                    related_name=related_name, error=None)
+
+    def post(self):
+        title    = self.get_argument('title', '').strip()
+        rid  = self.get_argument('related_id', '').strip()
+        rtyp = self.get_argument('related_type', '').strip()
+        if not title:
+            return self.render('tasks/new.html', page='tasks',
+                               related_id=rid or None, related_type=rtyp or None,
+                               related_name=None, error='Title is required')
+        data = {
+            'title':        title,
+            'description':  self.get_argument('description', '').strip() or None,
+            'task_type':    self.get_argument('task_type', 'general').strip() or 'general',
+            'priority':     self.get_argument('priority', 'Medium'),
+            'due_date':     self.get_argument('due_date', '').strip() or None,
+            'owner':        self.get_argument('owner', 'Rutger').strip() or 'Rutger',
+            'message':      self.get_argument('message', '').strip() or None,  # Bug 1 fix
+            'notes':        self.get_argument('notes', '').strip() or None,
+            'status':       'Pending',
+        }
+        if rid and rtyp:
+            try:
+                data['related_id']   = int(rid)
+                data['related_type'] = rtyp
+            except ValueError:
+                pass
+        tid = db.create_action_task(data)
         self.redirect(f'/tasks/{tid}')
 
 
@@ -866,25 +944,43 @@ class TaskEditHandler(Base):
 class TaskCopyHandler(Base):
     def post(self, tid):
         db.mark_task_copied(int(tid))
-        self.redirect(f'/tasks/{tid}')
+        ref = self.request.headers.get('Referer', '')
+        # If coming from candidate detail, go back there; otherwise open task detail
+        if '/candidates/' in ref:
+            self.redirect(ref)
+        else:
+            self.redirect(f'/tasks/{tid}')
 
 
 class TaskMarkSentHandler(Base):
     def post(self, tid):
         db.mark_task_sent(int(tid))
-        self.redirect(f'/tasks/{tid}')
+        ref = self.request.headers.get('Referer', '')
+        if '/candidates/' in ref:
+            self.redirect(ref)
+        else:
+            self.redirect(f'/tasks/{tid}')
 
 
 class TaskCompleteHandler(Base):
     def post(self, tid):
         db.complete_action_task(int(tid))
-        self.redirect('/tasks')
+        # Return to candidate detail if that's where the user came from (Bug 4 fix)
+        ref = self.request.headers.get('Referer', '')
+        if '/candidates/' in ref:
+            self.redirect(ref)
+        else:
+            self.redirect('/tasks')
 
 
 class TaskRejectHandler(Base):
     def post(self, tid):
         db.reject_action_task(int(tid))
-        self.redirect('/tasks')
+        ref = self.request.headers.get('Referer', '')
+        if '/candidates/' in ref:
+            self.redirect(ref)
+        else:
+            self.redirect('/tasks')
 
 
 class TaskRescheduleHandler(Base):
@@ -1262,7 +1358,7 @@ class VoiceNoteNewHandler(Base):
                 'title':        f'Review Voice Note — {name}',
                 'description':  f'Voice note submitted for screening. URL: {url or "(none)"}',
                 'priority':     'Medium',
-                'status':       'Open',
+                'status':       'Pending',
                 'owner':        'Rutger',
                 'related_type': 'voice_note_screen',
                 'related_id':   vn_id,
@@ -1519,6 +1615,7 @@ def make_app():
         (r"/observer/([0-9]+)/resolve",         ObserverResolveHandler),
         # Action Queue
         (r"/tasks",                                             TaskListHandler),
+        (r"/tasks/new",                                         TaskNewHandler),
         (r"/tasks/([0-9]+)",                                    TaskDetailHandler),
         (r"/tasks/([0-9]+)/edit",                               TaskEditHandler),
         (r"/tasks/([0-9]+)/copy",                               TaskCopyHandler),

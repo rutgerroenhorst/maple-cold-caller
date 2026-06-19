@@ -10,18 +10,44 @@
 {% end %}
 
 {% block header_actions %}
-<a href="/candidates/{{ candidate['id'] }}/edit" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">Edit</a>
+<a href="/tasks/new?related_type=candidate&related_id={{ candidate['id'] }}"
+   class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + Task
+</a>
+<a href="/candidates/{{ candidate['id'] }}/edit"
+   class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  Edit
+</a>
 {% end %}
 
 {% block content %}
+
+{% set _status_label = {
+  'found':    'Found',
+  'contacted':'Contacted',
+  'replied':  'Replied',
+  'qualified':'Qualified',
+  'interview':'Interview',
+  'placed':   'Placed',
+  'rejected': 'Rejected',
+  'nurture':  'Nurture',
+} %}
 
 <div x-data="{
   status: '{{ candidate['status'] }}',
   aiLoading: false,
   aiError: '',
   aiResult: null,
+  statusBadgeClass(s) {
+    const map = {found:'bg-slate-700 text-slate-300',contacted:'bg-blue-900 text-blue-300',replied:'bg-indigo-900 text-indigo-300',qualified:'bg-violet-900 text-violet-300',interview:'bg-amber-900 text-amber-300',placed:'bg-green-900 text-green-300',rejected:'bg-red-900 text-red-300',nurture:'bg-teal-900 text-teal-300'};
+    return map[s] || 'bg-slate-700 text-slate-300';
+  },
+  statusLabel(s) {
+    const map = {found:'Found',contacted:'Contacted',replied:'Replied',qualified:'Qualified',interview:'Interview',placed:'Placed',rejected:'Rejected',nurture:'Nurture'};
+    return map[s] || s;
+  },
   verdictBadge(v) {
-    const map = {'Strong Hire': 'bg-green-900 text-green-300', 'Good Fit': 'bg-blue-900 text-blue-300', 'Maybe': 'bg-amber-900 text-amber-300', 'Weak': 'bg-orange-900 text-orange-300', 'Pass': 'bg-red-900 text-red-300'};
+    const map = {'Strong Hire':'bg-green-900 text-green-300','Good Fit':'bg-blue-900 text-blue-300','Maybe':'bg-amber-900 text-amber-300','Weak':'bg-orange-900 text-orange-300','Pass':'bg-red-900 text-red-300'};
     return map[v] || 'bg-slate-700 text-slate-300';
   },
   async runAIScore() {
@@ -39,26 +65,32 @@
   }
 }">
 
-<!-- Header card -->
-<div class="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-5">
+<!-- ── HEADER CARD ────────────────────────────────────────────────────────── -->
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-4">
   <div class="flex flex-wrap items-start gap-4 mb-4">
     <div class="w-12 h-12 rounded-full bg-indigo-700 flex items-center justify-center text-xl font-bold text-white flex-shrink-0">
       {{ candidate['full_name'][0].upper() if candidate['full_name'] else '?' }}
     </div>
-    <div class="flex-1">
+    <div class="flex-1 min-w-0">
       <div class="flex flex-wrap items-center gap-2 mb-0.5">
         <h2 class="text-xl font-bold text-white">{{ candidate['full_name'] }}</h2>
-        <span class="badge text-xs" :class="statusBadgeClass(status)" x-text="status"></span>
+        <span class="badge text-xs" :class="statusBadgeClass(status)"
+              x-text="statusLabel(status)"></span>
       </div>
-      <p class="text-slate-400 text-sm">{{ candidate['current_role'] or 'No role listed' }} · {{ candidate['platform_source'] or 'Unknown source' }}</p>
+      <p class="text-slate-400 text-sm">{{ candidate['current_role'] or 'No role listed' }}
+        {% if candidate['platform_source'] %} · {{ candidate['platform_source'] }}{% end %}
+      </p>
       {% if candidate['profile_url'] %}
-      <a href="{{ candidate['profile_url'] }}" target="_blank" class="text-xs text-indigo-400 hover:underline">View Profile →</a>
+      <a href="{{ candidate['profile_url'] }}" target="_blank"
+         class="text-xs text-indigo-400 hover:underline">View Profile →</a>
       {% end %}
     </div>
-    <!-- AI Score -->
-    <div class="text-center">
+    <!-- AI Score bubble -->
+    <div class="text-center flex-shrink-0">
       {% if candidate['ai_score'] %}
-      <p class="text-3xl font-bold {% if candidate['ai_score'] >= 75 %}text-green-400{% elif candidate['ai_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">{{ candidate['ai_score'] }}</p>
+      <p class="text-3xl font-bold {% if candidate['ai_score'] >= 75 %}text-green-400{% elif candidate['ai_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">
+        {{ candidate['ai_score'] }}
+      </p>
       <p class="text-xs text-slate-500">AI Score</p>
       {% if candidate['ai_verdict'] %}
       <span class="badge mt-1" :class="verdictBadge('{{ candidate['ai_verdict'] }}')">{{ candidate['ai_verdict'] }}</span>
@@ -75,29 +107,34 @@
     {% for s in ['found', 'contacted', 'replied', 'qualified', 'interview', 'placed', 'rejected'] %}
     <button @click="setStatus('{{ s }}')"
             :class="status === '{{ s }}' ? 'ring-2 ring-indigo-400 opacity-100' : 'opacity-60 hover:opacity-90'"
-            class="badge {% if s == 'placed' %}bg-green-900 text-green-300{% elif s == 'rejected' %}bg-red-900 text-red-300{% elif s == 'interview' %}bg-amber-900 text-amber-300{% elif s == 'qualified' %}bg-violet-900 text-violet-300{% elif s == 'replied' %}bg-indigo-900 text-indigo-300{% elif s == 'contacted' %}bg-blue-900 text-blue-300{% else %}bg-slate-700 text-slate-300{% end %} cursor-pointer px-3 py-1.5">
-      {{ s.capitalize() }}
+            class="badge {% if s == 'placed' %}bg-green-900 text-green-300{% elif s == 'rejected' %}bg-red-900 text-red-300{% elif s == 'interview' %}bg-amber-900 text-amber-300{% elif s == 'qualified' %}bg-violet-900 text-violet-300{% elif s == 'replied' %}bg-indigo-900 text-indigo-300{% elif s == 'contacted' %}bg-blue-900 text-blue-300{% else %}bg-slate-700 text-slate-300{% end %} cursor-pointer px-3 py-1.5 text-xs">
+      {{ _status_label.get(s, s.capitalize()) }}
     </button>
     {% end %}
   </div>
 
-  <!-- AI Score button -->
-  <div class="flex flex-wrap gap-3 items-center">
+  <!-- Action buttons -->
+  <div class="flex flex-wrap gap-2 items-center">
     <button @click="runAIScore()" :disabled="aiLoading"
             class="inline-flex items-center gap-2 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
       <span x-show="aiLoading">⏳ Scoring...</span>
-      <span x-show="!aiLoading">🤖 {{ 'Re-score with AI' if candidate['ai_score'] else 'Score with AI' }}</span>
+      <span x-show="!aiLoading">🤖 {{ 'Re-score' if candidate['ai_score'] else 'Score with AI' }}</span>
     </button>
-    <a href="/matches/new?candidate_id={{ candidate['id'] }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-      Add Match Score
+    <a href="/tasks/new?related_type=candidate&related_id={{ candidate['id'] }}"
+       class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      + Create Task
     </a>
-    <a href="/outreach/new?candidate_id={{ candidate['id'] }}" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+    <a href="/outreach/new?candidate_id={{ candidate['id'] }}"
+       class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
       Add Outreach
+    </a>
+    <a href="/voice-notes/new"
+       class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+      Screen Voice Note
     </a>
   </div>
   <p x-show="aiError" x-text="aiError" class="mt-2 text-sm text-red-400"></p>
 
-  <!-- AI Summary -->
   {% if candidate['ai_summary'] %}
   <div class="mt-4 bg-violet-950/40 border border-violet-900/40 rounded-lg p-4">
     <p class="text-xs font-semibold text-violet-400 uppercase tracking-wide mb-1">AI Assessment</p>
@@ -106,103 +143,248 @@
   {% end %}
 </div>
 
-<!-- Next Best Action -->
+<!-- ── NEXT BEST ACTION ──────────────────────────────────────────────────── -->
+{% set top_open_task = open_tasks[0] if open_tasks else None %}
 {% set cstatus = candidate['status'] or 'found' %}
 {% set has_ai = candidate['ai_score'] is not None %}
-<div class="mb-5 bg-slate-800 border {% if not has_ai %}border-violet-900/50{% elif cstatus in ('found','contacted') %}border-indigo-900/50{% elif cstatus in ('qualified','interview') %}border-amber-900/50{% elif cstatus == 'placed' %}border-green-900/40{% else %}border-slate-700{% end %} rounded-xl p-5">
+
+<div class="mb-4 rounded-xl border p-5
+            {% if top_open_task and top_open_task.get('status') not in ('Completed','Rejected') %}bg-indigo-950/30 border-indigo-800/40
+            {% elif cstatus == 'placed' %}bg-green-950/30 border-green-900/40
+            {% elif cstatus == 'rejected' %}bg-slate-800 border-slate-700
+            {% else %}bg-slate-800 border-slate-700{% end %}">
   <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Next Best Action</p>
   <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
     <div class="flex-1">
-      {% if not has_ai %}
-      <p class="text-sm text-white font-medium mb-0.5">Score with AI</p>
-      <p class="text-xs text-slate-400">No AI score yet. Run an AI assessment to get a verdict and identify strengths.</p>
-      {% elif cstatus == 'found' %}
-      <p class="text-sm text-white font-medium mb-0.5">Start outreach</p>
-      <p class="text-xs text-slate-400">Candidate is in the pipeline. Prepare and send an outreach message to make contact.</p>
-      {% elif cstatus == 'contacted' %}
-      <p class="text-sm text-white font-medium mb-0.5">Follow up or wait</p>
-      <p class="text-xs text-slate-400">Outreach was sent. Log a follow-up task or wait for a response before proceeding.</p>
-      {% elif cstatus == 'replied' %}
-      <p class="text-sm text-white font-medium mb-0.5">Qualify the candidate</p>
-      <p class="text-xs text-slate-400">Candidate replied. Screen their voice note or mark them as Qualified to move forward.</p>
-      {% elif cstatus == 'qualified' %}
-      <p class="text-sm text-white font-medium mb-0.5">Screen voice note or book interview</p>
-      <p class="text-xs text-slate-400">Candidate is qualified. Screen their voice note or proceed directly to interview.</p>
-      {% elif cstatus == 'interview' %}
-      <p class="text-sm text-white font-medium mb-0.5">Place or reject after interview</p>
-      <p class="text-xs text-slate-400">Interview stage. Make a final decision and update the status to Placed or Rejected.</p>
+      {% if top_open_task %}
+        {% set t = top_open_task %}
+        {% set t_status = t.get('status','Pending') %}
+        {% if t_status == 'Copied' %}
+        <p class="text-sm text-white font-medium mb-0.5">📋 Message copied — send it now</p>
+        <p class="text-xs text-slate-400">Task: <span class="text-slate-300">{{ t.get('title','') }}</span>. Copy the message and send it manually, then mark Sent.</p>
+        {% elif t_status == 'Sent' %}
+        <p class="text-sm text-yellow-300 font-medium mb-0.5">📨 Waiting for response</p>
+        <p class="text-xs text-slate-400">Task: <span class="text-slate-300">{{ t.get('title','') }}</span>. Mark complete when you hear back.</p>
+        {% elif t_status in ('Blocked','Needs Review') %}
+        <p class="text-sm text-amber-300 font-medium mb-0.5">⚠ Task needs attention</p>
+        <p class="text-xs text-slate-400">Task: <span class="text-slate-300">{{ t.get('title','') }}</span> — Status: {{ t_status }}</p>
+        {% else %}
+        <p class="text-sm text-white font-medium mb-0.5">🎯 Open task: {{ t.get('title','') }}</p>
+        <p class="text-xs text-slate-400">
+          Priority: {{ t.get('priority','Medium') }}{% if t.get('due_date') %} · Due {{ t['due_date'] }}{% end %}
+        </p>
+        {% end %}
       {% elif cstatus == 'placed' %}
-      <p class="text-sm text-green-400 font-medium mb-0.5">✓ Placed</p>
-      <p class="text-xs text-slate-400">This candidate has been placed. No further action needed.</p>
+        <p class="text-sm text-green-400 font-medium mb-0.5">✓ Placed</p>
+        <p class="text-xs text-slate-400">This candidate has been placed. No further action needed.</p>
       {% elif cstatus == 'rejected' %}
-      <p class="text-sm text-slate-400 font-medium mb-0.5">Candidate rejected</p>
-      <p class="text-xs text-slate-500">This candidate has been rejected. Archive or return to queue if circumstances change.</p>
+        <p class="text-sm text-slate-400 font-medium mb-0.5">Candidate rejected</p>
+        <p class="text-xs text-slate-500">Archive or return to pipeline if circumstances change.</p>
+      {% elif not has_ai %}
+        <p class="text-sm text-white font-medium mb-0.5">Score with AI</p>
+        <p class="text-xs text-slate-400">No AI score yet. Run an AI assessment to get a verdict and identify strengths.</p>
+      {% elif cstatus == 'found' %}
+        <p class="text-sm text-white font-medium mb-0.5">Start outreach</p>
+        <p class="text-xs text-slate-400">Candidate is in the pipeline. Create a task and prepare your outreach message.</p>
+      {% elif cstatus == 'contacted' %}
+        <p class="text-sm text-white font-medium mb-0.5">Follow up</p>
+        <p class="text-xs text-slate-400">Outreach sent. Create a follow-up task or wait for a response.</p>
+      {% elif cstatus == 'replied' %}
+        <p class="text-sm text-white font-medium mb-0.5">Qualify the candidate</p>
+        <p class="text-xs text-slate-400">Candidate replied. Screen their voice note or mark Qualified.</p>
+      {% elif cstatus == 'qualified' %}
+        <p class="text-sm text-white font-medium mb-0.5">Screen voice note or book interview</p>
+        <p class="text-xs text-slate-400">Candidate is qualified. Screen voice note or proceed to interview.</p>
+      {% elif cstatus == 'interview' %}
+        <p class="text-sm text-white font-medium mb-0.5">Place or reject after interview</p>
+        <p class="text-xs text-slate-400">Make a final decision and update status.</p>
       {% else %}
-      <p class="text-sm text-white font-medium mb-0.5">Review candidate profile</p>
-      <p class="text-xs text-slate-400">Update the status and score this candidate to continue pipeline processing.</p>
+        <p class="text-sm text-white font-medium mb-0.5">Review candidate profile</p>
+        <p class="text-xs text-slate-400">Update status and score to continue pipeline processing.</p>
       {% end %}
     </div>
+    <!-- CTA buttons -->
     <div class="flex flex-col gap-2 flex-shrink-0 w-full sm:w-auto">
-      {% if not has_ai %}
-      <button @click="runAIScore()" :disabled="aiLoading"
-              class="bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        🤖 Score with AI
-      </button>
-      <a href="/voice-notes/new" class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        Screen Voice Note
-      </a>
-      {% elif cstatus in ('found','contacted') %}
-      <a href="/outreach/new?candidate_id={{ candidate['id'] }}"
-         class="text-center bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        + Add Outreach
-      </a>
-      <a href="/tasks/new?related_id={{ candidate['id'] }}&related_type=candidate"
-         class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        Create Task
-      </a>
-      {% elif cstatus == 'replied' %}
-      <a href="/voice-notes/new"
-         class="text-center bg-amber-700 hover:bg-amber-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        Screen Voice Note
-      </a>
-      <button @click="setStatus('qualified')"
-              class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        Mark Qualified
-      </button>
-      {% elif cstatus == 'qualified' %}
-      <a href="/voice-notes/new"
-         class="text-center bg-amber-700 hover:bg-amber-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        Screen Voice Note
-      </a>
-      <button @click="setStatus('interview')"
-              class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        Move to Interview
-      </button>
-      {% elif cstatus == 'interview' %}
-      <button @click="setStatus('placed')"
-              class="bg-green-900/60 hover:bg-green-900 text-green-300 text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        ✓ Mark Placed
-      </button>
-      <button @click="setStatus('rejected')"
-              class="bg-red-950/50 hover:bg-red-950 text-red-400 text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        ✗ Reject
-      </button>
-      {% elif cstatus in ('placed', 'rejected') %}
-      <a href="/candidates" class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        ← Back to Candidates
-      </a>
+      {% if top_open_task %}
+        {% set t = top_open_task %}
+        <a href="/tasks/{{ t['id'] }}"
+           class="text-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          Open Task →
+        </a>
+        {% if t.get('status') == 'Copied' %}
+        <form method="POST" action="/tasks/{{ t['id'] }}/mark-sent">
+          <button type="submit" class="w-full bg-yellow-900/60 hover:bg-yellow-900 text-yellow-300 text-sm px-4 py-2 rounded-lg transition-colors">Mark Sent</button>
+        </form>
+        {% elif t.get('status') == 'Sent' %}
+        <form method="POST" action="/tasks/{{ t['id'] }}/complete">
+          <button type="submit" class="w-full bg-green-900/60 hover:bg-green-900 text-green-300 text-sm px-4 py-2 rounded-lg transition-colors">Mark Complete</button>
+        </form>
+        {% elif t.get('status') == 'Pending' and t.get('message') %}
+        <form method="POST" action="/tasks/{{ t['id'] }}/copy">
+          <button type="submit" class="w-full bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">📋 Copy Message</button>
+        </form>
+        {% end %}
+      {% elif cstatus not in ('placed','rejected') %}
+        <a href="/tasks/new?related_type=candidate&related_id={{ candidate['id'] }}"
+           class="text-center bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          + Create Task
+        </a>
+        {% if not has_ai %}
+        <button @click="runAIScore()" :disabled="aiLoading"
+                class="bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          🤖 Score with AI
+        </button>
+        {% elif cstatus in ('replied','qualified') %}
+        <a href="/voice-notes/new"
+           class="text-center bg-amber-700 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          Screen Voice Note
+        </a>
+        {% elif cstatus == 'interview' %}
+        <button @click="setStatus('placed')"
+                class="bg-green-900/60 hover:bg-green-900 text-green-300 text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          ✓ Mark Placed
+        </button>
+        {% end %}
       {% else %}
-      <button @click="runAIScore()" :disabled="aiLoading"
-              class="bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-        🤖 Score with AI
-      </button>
+        <a href="/candidates"
+           class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          ← All Candidates
+        </a>
       {% end %}
     </div>
   </div>
 </div>
 
-<!-- 2-col detail -->
-<div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+<!-- ── RELATED TASKS ──────────────────────────────────────────────────────── -->
+{% if open_tasks or done_tasks %}
+<div class="mb-4 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Tasks</p>
+    <div class="flex items-center gap-2">
+      {% if open_tasks %}
+      <span class="badge bg-indigo-900 text-indigo-300">{{ len(open_tasks) }} open</span>
+      {% end %}
+      <a href="/tasks/new?related_type=candidate&related_id={{ candidate['id'] }}"
+         class="text-xs text-indigo-400 hover:text-indigo-300">+ Add</a>
+    </div>
+  </div>
+
+  {% if open_tasks %}
+  <div class="divide-y divide-slate-700">
+    {% for t in open_tasks %}
+    {% set sc = {'Pending':'bg-slate-700 text-slate-300','Copied':'bg-indigo-900 text-indigo-300','Sent':'bg-yellow-900 text-yellow-300','Needs Review':'bg-violet-900 text-violet-300','Blocked':'bg-orange-950 text-orange-400','Rescheduled':'bg-amber-900 text-amber-300'} %}
+    <a href="/tasks/{{ t['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/40 transition-colors">
+      <!-- priority dot -->
+      <span class="w-2 h-2 rounded-full flex-shrink-0
+                   {% if t.get('priority') == 'Critical' %}bg-red-500
+                   {% elif t.get('priority') == 'High' %}bg-orange-400
+                   {% elif t.get('priority') == 'Medium' %}bg-blue-400
+                   {% else %}bg-slate-600{% end %}"></span>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm text-white truncate">{{ t.get('title','') }}</p>
+        <div class="flex gap-2 mt-0.5 text-xs text-slate-500">
+          <span class="badge {{ sc.get(t.get('status',''), 'bg-slate-700 text-slate-400') }} py-0">{{ t.get('status','') }}</span>
+          {% if t.get('due_date') %}
+          <span>Due {{ t['due_date'] }}</span>
+          {% end %}
+          {% if t.get('task_type') and t['task_type'] != 'general' %}
+          <span>{{ t['task_type'].replace('_',' ') }}</span>
+          {% end %}
+        </div>
+      </div>
+      <span class="text-slate-500 text-xs flex-shrink-0">→</span>
+    </a>
+    {% end %}
+  </div>
+  {% end %}
+
+  {% if done_tasks %}
+  <div class="border-t border-slate-700/50">
+    <p class="text-xs text-slate-600 px-5 py-2">Recent completed</p>
+    {% for t in done_tasks %}
+    <a href="/tasks/{{ t['id'] }}" class="flex items-center gap-3 px-5 py-2 hover:bg-slate-700/30 transition-colors opacity-50">
+      <span class="text-xs {% if t.get('status') == 'Completed' %}text-green-500{% else %}text-red-500{% end %}">
+        {% if t.get('status') == 'Completed' %}✓{% else %}✗{% end %}
+      </span>
+      <p class="text-xs text-slate-400 truncate flex-1">{{ t.get('title','') }}</p>
+      <span class="text-xs text-slate-600">{{ (t.get('completed_at') or t.get('updated_at') or '')[:10] }}</span>
+    </a>
+    {% end %}
+  </div>
+  {% end %}
+
+  {% if not open_tasks and not done_tasks %}
+  <div class="px-5 py-6 text-center">
+    <p class="text-xs text-slate-500">No tasks yet for this candidate.</p>
+    <a href="/tasks/new?related_type=candidate&related_id={{ candidate['id'] }}"
+       class="inline-block mt-2 text-xs text-indigo-400 hover:text-indigo-300">+ Create first task →</a>
+  </div>
+  {% end %}
+</div>
+{% else %}
+<div class="mb-4 bg-slate-800 border border-slate-700 rounded-xl px-5 py-4 flex items-center justify-between">
+  <p class="text-xs text-slate-500">No tasks for this candidate yet.</p>
+  <a href="/tasks/new?related_type=candidate&related_id={{ candidate['id'] }}"
+     class="text-xs text-indigo-400 hover:text-indigo-300 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition-colors">
+    + Create Task
+  </a>
+</div>
+{% end %}
+
+<!-- ── SOURCE / RESEARCH CONTEXT ─────────────────────────────────────────── -->
+{% set sq = source_context.get('source_queue') %}
+{% set rq = source_context.get('research_queue') %}
+{% if sq or rq %}
+<div class="mb-4 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  <div class="px-5 py-3 border-b border-slate-700">
+    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Origin / Source Context</p>
+  </div>
+  <div class="px-5 py-4 space-y-3">
+    {% if sq %}
+    <div>
+      <p class="text-xs text-slate-500 mb-1">Source Queue</p>
+      <div class="flex flex-wrap gap-2 text-xs">
+        <span class="badge bg-slate-700 text-slate-300">{{ sq.get('source_type','Manual') }}</span>
+        <span class="badge {% if sq.get('tier') == 'A' %}bg-green-900 text-green-300{% elif sq.get('tier') == 'B' %}bg-blue-900 text-blue-300{% else %}bg-slate-700 text-slate-400{% end %}">
+          Tier {{ sq.get('tier','?') }}
+        </span>
+        <span class="text-slate-400">Score: {{ sq.get('score', '—') }}</span>
+        <a href="/sources/{{ sq['id'] }}" class="text-indigo-400 hover:text-indigo-300">View Source →</a>
+      </div>
+      {% if sq.get('profile_url') %}
+      <a href="{{ sq['profile_url'] }}" target="_blank" class="text-xs text-slate-500 hover:text-indigo-300 mt-1 block truncate">{{ sq['profile_url'][:80] }}</a>
+      {% end %}
+    </div>
+    {% end %}
+    {% if rq %}
+    <div>
+      <p class="text-xs text-slate-500 mb-1">Research Queue</p>
+      <div class="flex flex-wrap gap-2 text-xs">
+        <span class="badge bg-slate-700 text-slate-300">{{ rq.get('source','Research Worker') }}</span>
+        {% if rq.get('level') %}
+        <span class="badge {% if rq.get('level') == 'A' %}bg-green-900 text-green-300{% elif rq.get('level') == 'B' %}bg-blue-900 text-blue-300{% else %}bg-slate-700 text-slate-400{% end %}">
+          Level {{ rq['level'] }}
+        </span>
+        {% end %}
+        {% if rq.get('score') %}
+        <span class="text-slate-400">Score: {{ rq['score'] }}</span>
+        {% end %}
+        {% if rq.get('confidence_score') %}
+        <span class="text-slate-400">Confidence: {{ rq['confidence_score'] }}</span>
+        {% end %}
+        <a href="/research/queue/{{ rq['id'] }}" class="text-indigo-400 hover:text-indigo-300">View Research Item →</a>
+      </div>
+      {% if rq.get('detected_role') %}
+      <p class="text-xs text-slate-500 mt-1">Detected role: {{ rq['detected_role'] }}</p>
+      {% end %}
+    </div>
+    {% end %}
+  </div>
+</div>
+{% end %}
+
+<!-- ── 2-COL DETAIL GRID ──────────────────────────────────────────────────── -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
 
   <!-- AI Strengths / Weaknesses -->
   {% if candidate['ai_strengths'] or candidate['ai_weaknesses'] %}
@@ -225,7 +407,15 @@
   <!-- Experience Grid -->
   <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
     <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-700 pb-2">Experience</p>
-    {% for label, key in [('Cold Calling', 'cold_calling_experience'), ('Appointment Setting', 'appointment_setting_experience'), ('B2B', 'b2b_experience'), ('D2D', 'd2d_experience'), ('Gatekeeper', 'gatekeeper_experience'), ('Past Roles', 'past_sales_roles'), ('Proof / Results', 'proof_results')] %}
+    {% for label, key in [
+      ('Cold Calling', 'cold_calling_experience'),
+      ('Appointment Setting', 'appointment_setting_experience'),
+      ('B2B', 'b2b_experience'),
+      ('D2D', 'd2d_experience'),
+      ('Gatekeeper', 'gatekeeper_experience'),
+      ('Past Roles', 'past_sales_roles'),
+      ('Proof / Results', 'proof_results'),
+    ] %}
     {% if candidate[key] %}
     <div>
       <p class="text-xs text-slate-500">{{ label }}</p>
@@ -243,14 +433,22 @@
     </div>
   </div>
 
+  <!-- Notes -->
+  {% if candidate.get('notes') %}
+  <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
+    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Notes</p>
+    <p class="text-sm text-slate-300 whitespace-pre-line">{{ candidate['notes'] }}</p>
+  </div>
+  {% end %}
+
 </div>
 
-<!-- Match Scores -->
+<!-- ── MATCH SCORES ──────────────────────────────────────────────────────── -->
 {% if match_scores %}
-<div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden mb-5">
-  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-    <h3 class="font-semibold text-white text-sm">Match Scores</h3>
-    <a href="/matches/new?candidate_id={{ candidate['id'] }}" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add Match</a>
+<div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden mb-4">
+  <div class="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Match Scores</h3>
+    <a href="/matches/new?candidate_id={{ candidate['id'] }}" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add</a>
   </div>
   <table class="w-full text-sm">
     <thead>
@@ -265,7 +463,9 @@
       {% for m in match_scores %}
       <tr class="hover:bg-slate-700/40">
         <td class="px-5 py-2 text-slate-300">{{ m['client_name'] or 'Unknown' }}</td>
-        <td class="px-5 py-2 font-bold {% if m['match_score'] and m['match_score'] >= 75 %}text-green-400{% elif m['match_score'] and m['match_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">{{ m['match_score'] if m['match_score'] is not None else '—' }}</td>
+        <td class="px-5 py-2 font-bold {% if m['match_score'] and m['match_score'] >= 75 %}text-green-400{% elif m['match_score'] and m['match_score'] >= 50 %}text-amber-400{% else %}text-red-400{% end %}">
+          {{ m['match_score'] if m['match_score'] is not None else '—' }}
+        </td>
         <td class="px-5 py-2 text-slate-400 text-xs">{{ m['recommended_next_action'] or '—' }}</td>
         <td class="px-5 py-2 text-right"><a href="/matches/{{ m['id'] }}" class="text-xs text-indigo-400 hover:underline">View</a></td>
       </tr>
@@ -275,11 +475,11 @@
 </div>
 {% end %}
 
-<!-- Outreach list -->
+<!-- ── OUTREACH ───────────────────────────────────────────────────────────── -->
 {% if outreach %}
 <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-    <h3 class="font-semibold text-white text-sm">Outreach</h3>
+  <div class="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Outreach</h3>
     <a href="/outreach/new?candidate_id={{ candidate['id'] }}" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add</a>
   </div>
   <div class="divide-y divide-slate-700">
@@ -289,7 +489,9 @@
         <a href="/outreach/{{ o['id'] }}" class="text-sm font-medium text-white hover:text-indigo-400">{{ o['client_name'] or 'Unknown campaign' }}</a>
         <p class="text-xs text-slate-400">Next: {{ o['next_follow_up_date'] or '—' }}</p>
       </div>
-      <span class="badge {% if o['outreach_status'] == 'sent' %}bg-blue-900 text-blue-300{% elif o['outreach_status'] == 'replied' or o['outreach_status'] == 'booked' %}bg-green-900 text-green-300{% else %}bg-slate-700 text-slate-300{% end %}">{{ o['outreach_status'] }}</span>
+      <span class="badge {% if o['outreach_status'] == 'sent' %}bg-blue-900 text-blue-300{% elif o['outreach_status'] in ('replied','booked') %}bg-green-900 text-green-300{% else %}bg-slate-700 text-slate-300{% end %}">
+        {{ o['outreach_status'] }}
+      </span>
     </div>
     {% end %}
   </div>
@@ -297,13 +499,4 @@
 {% end %}
 
 </div>
-{% end %}
-
-{% block scripts %}
-<script>
-function statusBadgeClass(status) {
-  const map = {found:'bg-slate-700 text-slate-300', contacted:'bg-blue-900 text-blue-300', replied:'bg-indigo-900 text-indigo-300', qualified:'bg-violet-900 text-violet-300', interview:'bg-amber-900 text-amber-300', placed:'bg-green-900 text-green-300', rejected:'bg-red-900 text-red-300'};
-  return map[status] || 'bg-slate-700 text-slate-300';
-}
-</script>
 {% end %}

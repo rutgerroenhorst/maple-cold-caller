@@ -1,8 +1,15 @@
 {% extends "../base.html" %}
-{% block title %}Action Queue — Maple Growth OS{% end %}
+{% block title %}Action Queue — Maple OS{% end %}
 
 {% block header %}
 <h1 class="text-lg font-semibold text-white">Action Queue</h1>
+{% end %}
+
+{% block header_actions %}
+<a href="/tasks/new"
+   class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + New Task
+</a>
 {% end %}
 
 {% block content %}
@@ -14,27 +21,27 @@
 </div>
 
 <!-- Stats row -->
-<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-5">
+<div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-5">
   {% set tiles = [
-    ('Overdue',        str(summary['overdue']),        'text-red-400',    '?status=',    summary['overdue'] > 0),
-    ('Due Today',      str(summary['due_today']),      'text-amber-300',  '?status=',    summary['due_today'] > 0),
-    ('Pending',        str(summary['pending']),        'text-blue-300',   '?status=Pending', False),
-    ('High Priority',  str(summary['high_priority']), 'text-orange-300', '?priority=High', False),
-    ('Copied',         str(summary['copied']),         'text-indigo-300', '?status=Copied', False),
-    ('Sent',           str(summary['sent_pending']),   'text-yellow-300', '?status=Sent',   False),
-    ('Done Today',     str(summary['completed_today']),'text-green-300',  '?status=Completed', False),
+    ('Overdue',       str(summary['overdue']),          'text-red-400',    '/tasks?due=overdue',          summary['overdue'] > 0),
+    ('Due Today',     str(summary['due_today']),         'text-amber-300',  '/tasks?due=today',            summary['due_today'] > 0),
+    ('Pending',       str(summary['pending']),           'text-blue-300',   '/tasks?status=Pending',       False),
+    ('High Priority', str(summary['high_priority']),     'text-orange-300', '/tasks?priority=High',        False),
+    ('Copied',        str(summary['copied']),            'text-indigo-300', '/tasks?status=Copied',        False),
+    ('Sent',          str(summary['sent_pending']),      'text-yellow-300', '/tasks?status=Sent',          False),
+    ('Done Today',    str(summary['completed_today']),   'text-green-300',  '/tasks?status=Completed',     False),
   ] %}
   {% for label, val, cls, href, urgent in tiles %}
-  <a href="/tasks{{ href }}"
+  <a href="{{ href }}"
      class="bg-slate-800 border border-{% if urgent %}red{% else %}slate{% end %}-700 rounded-xl p-3 hover:border-slate-500 transition-colors text-center">
-    <p class="text-2xl font-bold {{ cls }}">{{ val }}</p>
+    <p class="text-xl font-bold {{ cls }}">{{ val }}</p>
     <p class="text-xs text-slate-500 mt-0.5 leading-tight">{{ label }}</p>
   </a>
   {% end %}
 </div>
 
-<!-- Overdue banner -->
-{% if overdue %}
+<!-- Overdue banner (only when no specific due filter active) -->
+{% if overdue and not due_filter and not status_filter %}
 <div class="mb-4 bg-red-950/30 border border-red-900/40 rounded-xl px-4 py-3">
   <p class="text-xs font-semibold text-red-400 mb-2">⚠ {{ len(overdue) }} Overdue</p>
   <div class="flex flex-wrap gap-2">
@@ -44,40 +51,78 @@
       [{{ t['priority'] }}] {{ t['title'][:40] }}{% if len(t['title']) > 40 %}…{% end %}
     </a>
     {% end %}
-    {% if len(overdue) > 5 %}<span class="text-xs text-slate-500 self-center">+{{ len(overdue)-5 }} more</span>{% end %}
+    {% if len(overdue) > 5 %}
+    <a href="/tasks?due=overdue" class="text-xs text-slate-400 hover:text-white self-center">+{{ len(overdue)-5 }} more →</a>
+    {% end %}
   </div>
 </div>
 {% end %}
 
-<!-- Filters -->
-<div class="flex flex-wrap gap-2 mb-4 items-center">
-  <span class="text-xs text-slate-500">Filter:</span>
-  {% for label, param, val in [
-    ('All', '', ''),
-    ('Pending', 'status', 'Pending'),
-    ('Copied', 'status', 'Copied'),
-    ('Sent', 'status', 'Sent'),
-    ('Completed', 'status', 'Completed'),
-    ('Rejected', 'status', 'Rejected'),
-    ('Rescheduled', 'status', 'Rescheduled'),
-  ] %}
-  {% set active = (status_filter == val) %}
-  <a href="/tasks{% if val %}?status={{ val }}{% end %}"
-     class="text-xs px-3 py-1 rounded-full border transition-colors
-            {% if active %}bg-indigo-600 border-indigo-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
-    {{ label }}
-  </a>
-  {% end %}
-  {% for label, param, val in [
-    ('High', 'priority', 'High'),
-    ('Critical', 'priority', 'Critical'),
-  ] %}
-  {% set active = (priority_filter == val) %}
-  <a href="/tasks?priority={{ val }}"
-     class="text-xs px-3 py-1 rounded-full border transition-colors
-            {% if active %}bg-orange-700 border-orange-600 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
-    {{ label }}
-  </a>
+<!-- Filter bar -->
+<div class="mb-4 space-y-2">
+  <!-- Status filters -->
+  <div class="flex flex-wrap gap-1.5 items-center">
+    <span class="text-xs text-slate-600 mr-1">Status:</span>
+    {% for label, val in [('All', ''), ('Pending', 'Pending'), ('Copied', 'Copied'), ('Sent', 'Sent'), ('Blocked', 'Blocked'), ('Needs Review', 'Needs Review'), ('Rescheduled', 'Rescheduled'), ('Completed', 'Completed'), ('Rejected', 'Rejected')] %}
+    {% set active = (status_filter == val and not due_filter and not priority_filter) %}
+    <a href="/tasks{% if val %}?status={{ val }}{% end %}"
+       class="text-xs px-2.5 py-1 rounded-full border transition-colors
+              {% if active %}bg-indigo-600 border-indigo-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+      {{ label }}
+    </a>
+    {% end %}
+  </div>
+  <!-- Due / Priority filters -->
+  <div class="flex flex-wrap gap-1.5 items-center">
+    <span class="text-xs text-slate-600 mr-1">Due:</span>
+    {% for label, val in [('Overdue', 'overdue'), ('Today', 'today'), ('Upcoming', 'upcoming')] %}
+    {% set active = (due_filter == val) %}
+    <a href="/tasks?due={{ val }}"
+       class="text-xs px-2.5 py-1 rounded-full border transition-colors
+              {% if active %}bg-red-700 border-red-600 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+      {{ label }}
+    </a>
+    {% end %}
+    <span class="text-xs text-slate-600 ml-2 mr-1">Priority:</span>
+    {% for label, val in [('Critical', 'Critical'), ('High', 'High'), ('Medium', 'Medium')] %}
+    {% set active = (priority_filter == val) %}
+    <a href="/tasks?priority={{ val }}"
+       class="text-xs px-2.5 py-1 rounded-full border transition-colors
+              {% if active %}bg-orange-700 border-orange-600 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+      {{ label }}
+    </a>
+    {% end %}
+  </div>
+  <!-- Active filter chips + clear -->
+  {% if status_filter or due_filter or priority_filter or type_filter %}
+  <div class="flex flex-wrap gap-1.5 items-center">
+    <span class="text-xs text-slate-500">Active filters:</span>
+    {% if status_filter %}
+    <span class="inline-flex items-center gap-1 text-xs bg-indigo-900/40 border border-indigo-700 text-indigo-300 px-2 py-0.5 rounded-full">
+      status: {{ status_filter }}
+      <a href="/tasks" class="hover:text-white ml-0.5">×</a>
+    </span>
+    {% end %}
+    {% if due_filter %}
+    <span class="inline-flex items-center gap-1 text-xs bg-red-900/40 border border-red-700 text-red-300 px-2 py-0.5 rounded-full">
+      due: {{ due_filter }}
+      <a href="/tasks" class="hover:text-white ml-0.5">×</a>
+    </span>
+    {% end %}
+    {% if priority_filter %}
+    <span class="inline-flex items-center gap-1 text-xs bg-orange-900/40 border border-orange-700 text-orange-300 px-2 py-0.5 rounded-full">
+      priority: {{ priority_filter }}
+      <a href="/tasks" class="hover:text-white ml-0.5">×</a>
+    </span>
+    {% end %}
+    {% if type_filter %}
+    <span class="inline-flex items-center gap-1 text-xs bg-slate-700 border border-slate-600 text-slate-300 px-2 py-0.5 rounded-full">
+      type: {{ type_filter }}
+      <a href="/tasks" class="hover:text-white ml-0.5">×</a>
+    </span>
+    {% end %}
+    <a href="/tasks" class="text-xs text-slate-500 hover:text-white underline ml-1">Clear all</a>
+  </div>
   {% end %}
 </div>
 
@@ -85,80 +130,161 @@
 {% if items %}
 <div class="space-y-2">
   {% for task in items %}
-  {% set is_overdue = task.get('due_date') and task['due_date'] < '2099' and task['status'] not in ('Completed','Rejected') and task['due_date'] < '2026-06-19' %}
-  <div class="bg-slate-800 border border-{% if task['priority'] == 'Critical' %}red{% elif task['priority'] == 'High' %}orange{% else %}slate{% end %}-800 rounded-xl p-4 flex items-start gap-3
+  {% set is_overdue = task.get('due_date') and task['status'] not in ('Completed','Rejected') and task['due_date'] < today %}
+  {% set is_today   = task.get('due_date') and task['status'] not in ('Completed','Rejected') and task['due_date'] == today %}
+  <div class="bg-slate-800 border border-{% if task['priority'] == 'Critical' %}red-800{% elif task['priority'] == 'High' %}orange-800/60{% else %}slate-700{% end %} rounded-xl p-4
               {% if task['status'] in ('Completed', 'Rejected') %}opacity-50{% end %}">
+    <div class="flex items-start gap-3">
 
-    <!-- Priority dot -->
-    <div class="flex-shrink-0 mt-1 w-2.5 h-2.5 rounded-full
-                {% if task['priority'] == 'Critical' %}bg-red-500
-                {% elif task['priority'] == 'High' %}bg-orange-400
-                {% elif task['priority'] == 'Medium' %}bg-blue-400
-                {% else %}bg-slate-600{% end %}"></div>
+      <!-- Priority dot -->
+      <div class="flex-shrink-0 mt-1.5 w-2 h-2 rounded-full
+                  {% if task['priority'] == 'Critical' %}bg-red-500
+                  {% elif task['priority'] == 'High' %}bg-orange-400
+                  {% elif task['priority'] == 'Medium' %}bg-blue-400
+                  {% else %}bg-slate-600{% end %}"></div>
 
-    <div class="flex-1 min-w-0">
-      <div class="flex flex-wrap items-center gap-2 mb-0.5">
-        <a href="/tasks/{{ task['id'] }}" class="text-sm font-semibold text-white hover:text-indigo-300 transition-colors">
-          {{ task['title'] }}
-        </a>
-        <!-- Status badge -->
-        {% set sc = {'Pending':'bg-slate-700 text-slate-300','Copied':'bg-indigo-900 text-indigo-300','Sent':'bg-yellow-900 text-yellow-300','Completed':'bg-green-900 text-green-300','Rejected':'bg-red-950 text-red-400','Rescheduled':'bg-amber-900 text-amber-300','Blocked':'bg-orange-950 text-orange-400','Needs Review':'bg-violet-900 text-violet-300'} %}
-        <span class="badge {{ sc.get(task['status'], 'bg-slate-700 text-slate-300') }}">{{ task['status'] }}</span>
-        {% if task['priority'] in ('High','Critical') %}
-        <span class="badge {% if task['priority'] == 'Critical' %}bg-red-900 text-red-300{% else %}bg-orange-900 text-orange-300{% end %}">{{ task['priority'] }}</span>
+      <div class="flex-1 min-w-0">
+        <!-- Title + badges row -->
+        <div class="flex flex-wrap items-center gap-1.5 mb-1">
+          <a href="/tasks/{{ task['id'] }}" class="text-sm font-semibold text-white hover:text-indigo-300 transition-colors leading-tight">
+            {{ task['title'] }}
+          </a>
+          <!-- Status badge -->
+          {% set sc = {
+            'Pending':      'bg-slate-700 text-slate-300',
+            'Copied':       'bg-indigo-900 text-indigo-300',
+            'Sent':         'bg-yellow-900 text-yellow-300',
+            'Completed':    'bg-green-900 text-green-300',
+            'Rejected':     'bg-red-950 text-red-400',
+            'Rescheduled':  'bg-amber-900 text-amber-300',
+            'Blocked':      'bg-orange-950 text-orange-400',
+            'Needs Review': 'bg-violet-900 text-violet-300',
+          } %}
+          <span class="badge {{ sc.get(task['status'], 'bg-slate-700 text-slate-300') }}">{{ task['status'] }}</span>
+          {% if task['priority'] in ('High', 'Critical') %}
+          <span class="badge {% if task['priority'] == 'Critical' %}bg-red-900 text-red-300{% else %}bg-orange-900 text-orange-300{% end %}">
+            {{ task['priority'] }}
+          </span>
+          {% end %}
+        </div>
+
+        <!-- Meta row -->
+        <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500 mb-1.5">
+          {% if task.get('related_name') %}
+          {% if task.get('related_type') == 'candidate' %}
+          <span>👤 <a href="/candidates/{{ task.get('related_id') }}" class="hover:text-indigo-300">{{ task['related_name'] }}</a></span>
+          {% elif task.get('related_type') == 'research_item' %}
+          <span>🔍 <a href="/research/queue/{{ task.get('related_id') }}" class="hover:text-indigo-300">{{ task['related_name'] }}</a></span>
+          {% else %}
+          <span>{{ task['related_name'] }}</span>
+          {% end %}
+          {% end %}
+          {% if task.get('task_type') and task['task_type'] != 'general' %}
+          <span class="text-slate-600">{{ task['task_type'].replace('_', ' ') }}</span>
+          {% end %}
+          {% if task.get('due_date') %}
+          <span class="{% if is_overdue %}text-red-400 font-medium{% elif is_today %}text-amber-400 font-medium{% end %}">
+            {% if is_overdue %}⚠ Overdue: {{ task['due_date'] }}
+            {% elif is_today %}📅 Due today
+            {% else %}Due {{ task['due_date'] }}{% end %}
+          </span>
+          {% else %}
+          <span class="text-slate-700">No due date</span>
+          {% end %}
+          {% if task.get('owner') %}
+          <span class="text-slate-700">{{ task['owner'] }}</span>
+          {% end %}
+        </div>
+
+        <!-- Message preview -->
+        {% if task.get('message') and task['status'] in ('Pending', 'Copied') %}
+        <p class="text-xs text-slate-500 bg-slate-900 rounded px-2 py-1.5 mt-1 line-clamp-2 font-mono">
+          {{ (task['message'] or '')[:140] }}{% if len(task.get('message') or '') > 140 %}…{% end %}
+        </p>
         {% end %}
       </div>
-      <div class="flex flex-wrap gap-3 text-xs text-slate-500">
-        {% if task.get('related_name') %}
-        <span>👤 {{ task['related_name'] }}</span>
+
+      <!-- Quick actions -->
+      <div class="flex flex-col gap-1 flex-shrink-0 items-end">
+        <a href="/tasks/{{ task['id'] }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded transition-colors">Open</a>
+        {% if task['status'] == 'Pending' and task.get('message') %}
+        <form method="POST" action="/tasks/{{ task['id'] }}/copy" class="inline">
+          <button type="submit" class="text-xs bg-indigo-800 hover:bg-indigo-700 text-indigo-200 px-2 py-1 rounded transition-colors">Copy</button>
+        </form>
+        {% elif task['status'] == 'Copied' %}
+        <form method="POST" action="/tasks/{{ task['id'] }}/mark-sent" class="inline">
+          <button type="submit" class="text-xs bg-yellow-900/70 hover:bg-yellow-900 text-yellow-300 px-2 py-1 rounded transition-colors">Sent ✓</button>
+        </form>
+        {% elif task['status'] == 'Sent' %}
+        <form method="POST" action="/tasks/{{ task['id'] }}/complete" class="inline">
+          <button type="submit" class="text-xs bg-green-900/70 hover:bg-green-900 text-green-300 px-2 py-1 rounded transition-colors">Done ✓</button>
+        </form>
         {% end %}
-        {% if task.get('task_type') %}
-        <span>{{ task['task_type'].replace('_',' ') }}</span>
-        {% end %}
-        {% if task.get('due_date') %}
-        <span class="{% if task['status'] not in ('Completed','Rejected') and task['due_date'] < '2026-06-20' %}text-red-400{% end %}">
-          Due {{ task['due_date'] }}
-        </span>
+        {% if task['status'] == 'Pending' and not task.get('message') %}
+        <form method="POST" action="/tasks/{{ task['id'] }}/complete" class="inline">
+          <button type="submit" class="text-xs bg-green-900/40 hover:bg-green-900 text-green-400 px-2 py-1 rounded transition-colors">Done</button>
+        </form>
         {% end %}
       </div>
-    </div>
 
-    <!-- Quick actions -->
-    <div class="flex gap-1.5 flex-shrink-0">
-      <a href="/tasks/{{ task['id'] }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded transition-colors">Open</a>
-      {% if task['status'] == 'Pending' %}
-      <form method="POST" action="/tasks/{{ task['id'] }}/copy" class="inline">
-        <button type="submit" class="text-xs bg-indigo-800 hover:bg-indigo-700 text-indigo-200 px-2 py-1 rounded transition-colors">Copy</button>
-      </form>
-      {% elif task['status'] == 'Copied' %}
-      <form method="POST" action="/tasks/{{ task['id'] }}/mark-sent" class="inline">
-        <button type="submit" class="text-xs bg-yellow-900/60 hover:bg-yellow-900 text-yellow-300 px-2 py-1 rounded transition-colors">Sent ✓</button>
-      </form>
-      {% elif task['status'] == 'Sent' %}
-      <form method="POST" action="/tasks/{{ task['id'] }}/complete" class="inline">
-        <button type="submit" class="text-xs bg-green-900/60 hover:bg-green-900 text-green-300 px-2 py-1 rounded transition-colors">Done ✓</button>
-      </form>
-      {% end %}
     </div>
   </div>
   {% end %}
 </div>
+
+<!-- Pagination note if many results -->
+{% if len(items) >= 200 %}
+<p class="text-xs text-slate-600 text-center mt-4">Showing first 200 tasks. Use filters to narrow down.</p>
+{% end %}
+
 {% else %}
+<!-- Empty state -->
 <div class="bg-slate-800 border border-slate-700 rounded-xl px-8 py-14 text-center">
-  {% if status_filter %}
+  {% if due_filter == 'overdue' %}
+  <p class="text-2xl mb-3">✅</p>
+  <p class="text-white font-semibold text-sm mb-1">No overdue tasks</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">You're all caught up on deadlines.</p>
+  {% elif due_filter == 'today' %}
+  <p class="text-2xl mb-3">📅</p>
+  <p class="text-white font-semibold text-sm mb-1">Nothing due today</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No tasks are scheduled for today. Check upcoming tasks or create a new one.</p>
+  {% elif due_filter == 'upcoming' %}
+  <p class="text-2xl mb-3">📆</p>
+  <p class="text-white font-semibold text-sm mb-1">No upcoming tasks</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No tasks with future due dates found.</p>
+  {% elif status_filter == 'Copied' %}
+  <p class="text-2xl mb-3">📋</p>
+  <p class="text-white font-semibold text-sm mb-1">No copied tasks</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Copied tasks appear here when you copy a message. Open a Pending task and click Copy to move it here.</p>
+  {% elif status_filter == 'Sent' %}
+  <p class="text-2xl mb-3">📨</p>
+  <p class="text-white font-semibold text-sm mb-1">No sent tasks</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Mark a Copied task as Sent after you've manually sent the message.</p>
+  {% elif status_filter in ('Blocked', 'Needs Review') %}
+  <p class="text-2xl mb-3">✓</p>
+  <p class="text-white font-semibold text-sm mb-1">Nothing blocked</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No tasks currently need review or are blocked.</p>
+  {% elif status_filter %}
   <p class="text-2xl mb-3">✅</p>
   <p class="text-white font-semibold text-sm mb-1">No "{{ status_filter }}" tasks</p>
-  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No tasks with this status right now. Try a different filter or view all open tasks.</p>
-  <a href="/tasks" class="inline-block bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">View all tasks</a>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No tasks with this status right now.</p>
+  {% elif priority_filter %}
+  <p class="text-2xl mb-3">🎯</p>
+  <p class="text-white font-semibold text-sm mb-1">No {{ priority_filter }} priority tasks</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No active tasks with {{ priority_filter }} priority.</p>
   {% else %}
   <p class="text-2xl mb-3">🎯</p>
   <p class="text-white font-semibold text-sm mb-1">Action queue is clear</p>
-  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Tasks are created automatically when candidates move through the pipeline — approve a research candidate or reject a voice note to see tasks appear here.</p>
-  <div class="flex justify-center gap-3">
-    <a href="/research/queue" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Review Queue →</a>
-    <a href="/tasks/new" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">+ Create Task</a>
-  </div>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Tasks are created automatically when candidates move through the pipeline, or you can create one manually.</p>
   {% end %}
+  <div class="flex justify-center gap-3 flex-wrap">
+    {% if status_filter or due_filter or priority_filter %}
+    <a href="/tasks" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Clear Filters</a>
+    {% end %}
+    <a href="/tasks/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">+ Create Task</a>
+    <a href="/dashboard" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Command Center</a>
+    <a href="/research/queue" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Review Queue →</a>
+  </div>
 </div>
 {% end %}
 

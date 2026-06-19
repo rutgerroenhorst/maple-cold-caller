@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Command Center — Maple Growth OS{% end %}
+{% block title %}Command Center — Maple OS{% end %}
 
 {% block header %}
 <div>
-  <h1 class="text-lg font-semibold text-white">Maple Command Center</h1>
-  <p class="text-xs text-slate-500">Today's highest ROI actions, agent work and candidate pipeline.</p>
+  <h1 class="text-lg font-semibold text-white">Command Center</h1>
+  <p class="text-xs text-slate-500">Your highest ROI actions, pipeline overview, and agent status.</p>
 </div>
 {% end %}
 
@@ -19,26 +19,30 @@
 
 {% set roi = data.get('highest_roi') or {} %}
 
-<!-- Highest ROI Action -->
+<!-- ══ 1. HIGHEST ROI ACTION ══════════════════════════════════════════════ -->
 {% if roi %}
 <div class="mb-6 rounded-xl border px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-4
             {% if roi.get('level') == 'urgent' %}bg-red-950/30 border-red-800/40
             {% elif roi.get('level') == 'high' %}bg-amber-950/30 border-amber-800/40
-            {% else %}bg-indigo-950/30 border-indigo-800/40{% end %}">
+            {% elif roi.get('level') == 'medium' %}bg-indigo-950/30 border-indigo-800/40
+            {% else %}bg-slate-800 border-slate-700{% end %}">
   <div class="flex-1">
-    <p class="text-xs font-semibold uppercase tracking-wide
+    <p class="text-xs font-semibold uppercase tracking-wide mb-0.5
               {% if roi.get('level') == 'urgent' %}text-red-400
               {% elif roi.get('level') == 'high' %}text-amber-400
-              {% else %}text-indigo-400{% end %} mb-0.5">
-      {% if roi.get('level') == 'urgent' %}🔴 Urgent — {% elif roi.get('level') == 'high' %}🟠 High Priority — {% else %}⭐ Next Best Action — {% end %}{{ roi.get('title', '') }}
+              {% elif roi.get('level') == 'medium' %}text-indigo-400
+              {% else %}text-slate-400{% end %}">
+      {% if roi.get('level') == 'urgent' %}🔴 Urgent — {% elif roi.get('level') == 'high' %}🟠 High Priority — {% elif roi.get('level') == 'medium' %}⭐ Next Best Action — {% else %}💡 Suggested — {% end %}{{ roi.get('title', '') }}
     </p>
-    <p class="text-sm text-slate-200">{{ roi.get('description', '') }}</p>
+    <p class="text-sm text-slate-200">{{ roi.get('reason', roi.get('description', '')) }}</p>
   </div>
   <div class="flex gap-2 flex-shrink-0">
-    <a href="{{ roi.get('action_url', '/') }}"
-       class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-      {{ roi.get('action_label', 'Go') }}
+    {% if roi.get('action_url') %}
+    <a href="{{ roi['action_url'] }}"
+       class="{% if roi.get('level') == 'urgent' %}bg-red-700 hover:bg-red-600{% elif roi.get('level') == 'high' %}bg-amber-700 hover:bg-amber-600{% else %}bg-indigo-600 hover:bg-indigo-500{% end %} text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      {{ roi.get('action_label', 'Go →') }}
     </a>
+    {% end %}
     {% if roi.get('secondary_url') %}
     <a href="{{ roi['secondary_url'] }}"
        class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
@@ -49,41 +53,142 @@
 </div>
 {% end %}
 
-<!-- Quick Action Cards -->
-<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-  {% set quick_actions = [
-    ('🔍', 'Find Candidates',    '/research/url'),
-    ('👥', 'Review Candidates',  '/research/queue'),
-    ('📬', 'Follow-ups & Tasks', '/tasks'),
-    ('🎙', 'Voice Screening',    '/voice-notes'),
-    ('📅', 'Interviews',         '/interviews'),
+<!-- ══ 2. QUICK ACTIONS ═══════════════════════════════════════════════════ -->
+<div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-6">
+  {% set quick = [
+    ('🔍', 'Find Candidates',  '/research/url'),
+    ('📥', 'Source Queue',     '/sources'),
+    ('🔬', 'Review Queue',     '/research/queue'),
+    ('🎯', 'Action Queue',     '/tasks'),
+    ('🎙', 'Voice Screening',  '/voice-notes'),
+    ('📅', 'Interviews',       '/interviews'),
   ] %}
-  {% for icon, label, url in quick_actions %}
+  {% for icon, label, url in quick %}
   <a href="{{ url }}"
-     class="bg-slate-800 border border-slate-700 hover:border-indigo-500 rounded-xl p-4 flex flex-col items-center text-center gap-2 transition-colors group">
-    <span class="text-2xl">{{ icon }}</span>
-    <span class="text-xs font-medium text-slate-300 group-hover:text-white leading-tight">{{ label }}</span>
+     class="bg-slate-800 border border-slate-700 hover:border-indigo-500 rounded-xl p-3 flex flex-col items-center text-center gap-1.5 transition-colors group">
+    <span class="text-xl">{{ icon }}</span>
+    <span class="text-xs font-medium text-slate-400 group-hover:text-white leading-tight">{{ label }}</span>
   </a>
   {% end %}
 </div>
 
+<!-- ══ MAIN GRID ═══════════════════════════════════════════════════════════ -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-  <!-- Left: pipeline + needs approval -->
+  <!-- LEFT: 2 cols ─────────────────────────────────────────────────────── -->
   <div class="lg:col-span-2 space-y-5">
 
-    <!-- Pipeline -->
+    <!-- ── 3. ACTION QUEUE OVERVIEW ───────────────────────────────────── -->
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
-      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">Candidate Pipeline</p>
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Action Queue</p>
+        <a href="/tasks" class="text-xs text-indigo-400 hover:text-indigo-300">All Tasks →</a>
+      </div>
       <div class="grid grid-cols-4 sm:grid-cols-7 gap-2">
+        {% set tasks_overdue      = data.get('tasks_overdue', 0) %}
+        {% set tasks_due_today    = data.get('tasks_due_today', 0) %}
+        {% set tasks_pending      = data.get('tasks_pending', 0) %}
+        {% set tasks_copied       = data.get('tasks_copied', 0) %}
+        {% set tasks_sent         = data.get('tasks_sent', 0) %}
+        {% set tasks_blocked      = data.get('tasks_blocked', 0) %}
+        {% set tasks_done_today   = data.get('tasks_completed_today', 0) %}
+        {% set at_stats = [
+          ('Overdue',     str(tasks_overdue),   'text-red-400'    if tasks_overdue > 0    else 'text-slate-600',  '/tasks?due=overdue'),
+          ('Due Today',   str(tasks_due_today), 'text-amber-300'  if tasks_due_today > 0  else 'text-slate-600',  '/tasks?due=today'),
+          ('Pending',     str(tasks_pending),   'text-white'      if tasks_pending > 0    else 'text-slate-600',  '/tasks?status=Pending'),
+          ('Copied',      str(tasks_copied),    'text-blue-300'   if tasks_copied > 0     else 'text-slate-600',  '/tasks?status=Copied'),
+          ('Sent',        str(tasks_sent),      'text-indigo-300' if tasks_sent > 0       else 'text-slate-600',  '/tasks?status=Sent'),
+          ('Blocked',     str(tasks_blocked),   'text-amber-400'  if tasks_blocked > 0    else 'text-slate-600',  '/tasks?status=Needs+Review'),
+          ('Done Today',  str(tasks_done_today),'text-green-300'  if tasks_done_today > 0 else 'text-slate-600',  '/tasks?status=Completed'),
+        ] %}
+        {% for label, val, cls, href in at_stats %}
+        <a href="{{ href }}" class="bg-slate-900 rounded-lg p-3 text-center hover:bg-slate-700 transition-colors">
+          <p class="text-lg font-bold {{ cls }}">{{ val }}</p>
+          <p class="text-xs text-slate-500 mt-0.5 leading-tight">{{ label }}</p>
+        </a>
+        {% end %}
+      </div>
+      {% if data.get('tasks_ready_to_send') %}
+      <div class="mt-4 border-t border-slate-700 pt-3 space-y-1">
+        <p class="text-xs text-slate-500 mb-2">Ready to send (Copied):</p>
+        {% for t in data['tasks_ready_to_send'] %}
+        <a href="/tasks/{{ t['id'] }}" class="flex items-center justify-between px-3 py-2 bg-slate-900 hover:bg-slate-700 rounded-lg transition-colors">
+          <span class="text-sm text-white truncate">{{ t['title'] }}</span>
+          <span class="text-xs text-blue-400 ml-2 flex-shrink-0">Mark Sent →</span>
+        </a>
+        {% end %}
+      </div>
+      {% end %}
+    </div>
+
+    <!-- ── 4. RESEARCH PIPELINE ───────────────────────────────────────── -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Research Pipeline</p>
+        <a href="/research" class="text-xs text-indigo-400 hover:text-indigo-300">Research Hub →</a>
+      </div>
+      <!-- Funnel row: Sources → Source Queue → Review Queue → Candidates → Action Queue -->
+      <div class="flex items-stretch gap-1 overflow-x-auto pb-1">
+        {% set funnel = [
+          ('🔗', 'Sources',        str(data.get('sources_total', 0)),      '/research/sources',
+           str(data.get('sources_unprocessed', 0)) + ' unprocessed',
+           'text-amber-300' if data.get('sources_unprocessed', 0) > 0 else 'text-slate-500'),
+          ('📥', 'Source Queue',   str(data.get('sq_total', 0)),           '/sources',
+           str(data.get('sq_queued', 0)) + ' queued',
+           'text-indigo-300' if data.get('sq_queued', 0) > 0 else 'text-slate-500'),
+          ('🔬', 'Review Queue',   str(data.get('queue_total', 0)),        '/research/queue',
+           str(data.get('queue_needs_review', 0)) + ' need review',
+           'text-amber-300' if data.get('queue_needs_review', 0) > 0 else 'text-slate-500'),
+          ('👥', 'Candidates',     str(data.get('candidates_total', 0)),   '/candidates',
+           str(data.get('queue_moved', 0)) + ' moved in',
+           'text-green-300' if data.get('queue_moved', 0) > 0 else 'text-slate-500'),
+          ('🎯', 'Actions',        str(data.get('tasks_open', 0)),         '/tasks',
+           str(data.get('tasks_pending', 0)) + ' pending',
+           'text-white' if data.get('tasks_pending', 0) > 0 else 'text-slate-500'),
+        ] %}
+        {% for icon, label, total, url, sub, subcls in funnel %}
+        <a href="{{ url }}" class="flex-1 min-w-0 bg-slate-900 hover:bg-slate-700 rounded-lg p-3 text-center transition-colors">
+          <p class="text-lg mb-1">{{ icon }}</p>
+          <p class="text-base font-bold text-white">{{ total }}</p>
+          <p class="text-xs text-slate-400 truncate">{{ label }}</p>
+          <p class="text-xs {{ subcls }} truncate mt-0.5">{{ sub }}</p>
+        </a>
+        <span class="text-slate-700 self-center text-xs flex-shrink-0">›</span>
+        {% end %}
+      </div>
+      <!-- Source/queue detail line -->
+      <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        {% set rp_detail = [
+          ('Sources Blocked',   str(data.get('sources_blocked', 0)),    'text-red-400'    if data.get('sources_blocked', 0) > 0  else 'text-slate-600',  '/research/sources'),
+          ('Queue New',         str(data.get('queue_new', 0)),          'text-blue-300'   if data.get('queue_new', 0) > 0        else 'text-slate-600',  '/research/queue'),
+          ('Src Queue A/B',     str(data.get('sq_tier_a', 0) + data.get('sq_tier_b', 0)), 'text-green-300' if (data.get('sq_tier_a', 0) + data.get('sq_tier_b', 0)) > 0 else 'text-slate-600', '/sources'),
+          ('Voice Screened',    str(data.get('voice_notes_scored', 0)), 'text-teal-300'   if data.get('voice_notes_scored', 0) > 0 else 'text-slate-600', '/voice-notes'),
+        ] %}
+        {% for label, val, cls, href in rp_detail %}
+        <a href="{{ href }}" class="bg-slate-900 rounded-lg px-3 py-2 hover:bg-slate-700 transition-colors">
+          <span class="font-bold {{ cls }}">{{ val }}</span>
+          <span class="text-slate-500 ml-1">{{ label }}</span>
+        </a>
+        {% end %}
+      </div>
+    </div>
+
+    <!-- ── 5. CANDIDATE PIPELINE ──────────────────────────────────────── -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Candidate Pipeline</p>
+        <a href="/candidates" class="text-xs text-indigo-400 hover:text-indigo-300">All Candidates →</a>
+      </div>
+      <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
         {% set pipeline = [
-          ('New',       str(data.get('candidates_new', 0)),        'text-slate-300',       '/candidates'),
-          ('Contacted', str(data.get('candidates_contacted', 0)),  'text-blue-300',        '/candidates?status=contacted'),
-          ('Replied',   str(data.get('candidates_replied', 0)),    'text-indigo-300',      '/candidates?status=replied'),
-          ('Interview', str(data.get('candidates_interview', 0)),  'text-amber-300',       '/interviews'),
-          ('Placed',    str(data.get('candidates_placed', 0)),     'text-green-300',       '/candidates?status=placed'),
-          ('Rejected',  str(data.get('candidates_rejected', 0)),   'text-red-400',         '/candidates?status=rejected'),
-          ('Total',     str(data.get('candidates_total', 0)),      'text-white',           '/candidates'),
+          ('New',        str(data.get('candidates_new', 0)),       'text-slate-300',  '/candidates?status=found'),
+          ('Contacted',  str(data.get('candidates_contacted', 0)), 'text-blue-300',   '/candidates?status=contacted'),
+          ('Replied',    str(data.get('candidates_replied', 0)),   'text-indigo-300', '/candidates?status=replied'),
+          ('Qualified',  str(data.get('candidates_qualified', 0)), 'text-violet-300', '/candidates?status=qualified'),
+          ('Interview',  str(data.get('candidates_interview', 0)), 'text-amber-300',  '/interviews'),
+          ('Placed',     str(data.get('candidates_placed', 0)),    'text-green-300',  '/candidates?status=placed'),
+          ('Rejected',   str(data.get('candidates_rejected', 0)),  'text-red-400',    '/candidates?status=rejected'),
+          ('Total',      str(data.get('candidates_total', 0)),     'text-white',      '/candidates'),
         ] %}
         {% for label, val, cls, href in pipeline %}
         <a href="{{ href }}" class="bg-slate-900 rounded-lg p-3 text-center hover:bg-slate-700 transition-colors">
@@ -94,7 +199,7 @@
       </div>
     </div>
 
-    <!-- Needs Approval -->
+    <!-- ── 6. NEEDS YOUR APPROVAL ─────────────────────────────────────── -->
     <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
         <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Needs Your Approval</p>
@@ -122,46 +227,25 @@
       <div class="px-5 py-8 text-center">
         <p class="text-2xl mb-2">✓</p>
         <p class="text-slate-400 text-sm font-medium">Nothing needs approval right now.</p>
-        <p class="text-slate-600 text-xs mt-1">Add sources or run the research worker to get candidates in the pipeline.</p>
-        <a href="/research/url" class="inline-block mt-3 text-xs text-indigo-400 hover:text-indigo-300">Add Source →</a>
+        <p class="text-slate-600 text-xs mt-1 max-w-xs mx-auto">Add research sources or run the Candidate Research Worker to start filling the pipeline.</p>
+        <div class="flex justify-center gap-3 mt-4">
+          <a href="/research/url" class="text-xs text-indigo-400 hover:text-indigo-300">Add Source →</a>
+          <a href="/sources/new" class="text-xs text-slate-400 hover:text-white">Paste Profile →</a>
+        </div>
       </div>
-      {% end %}
-    </div>
-
-    <!-- Research row -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {% set research_stats = [
-        ('Sources to Process', str(data.get('research_sources_unprocessed', 0)),
-         'text-amber-300' if data.get('research_sources_unprocessed', 0) > 0 else 'text-slate-500',
-         '/research/sources'),
-        ('New in Queue',       str(data.get('research_queue_new', 0)),
-         'text-blue-300' if data.get('research_queue_new', 0) > 0 else 'text-slate-500',
-         '/research/queue'),
-        ('Needs Review',       str(data.get('research_queue_needs_review', 0)),
-         'text-amber-300' if data.get('research_queue_needs_review', 0) > 0 else 'text-slate-500',
-         '/research/queue?status=Needs+Review'),
-        ('Voice Notes Scored', str(data.get('voice_notes_scored', 0)),
-         'text-teal-300' if data.get('voice_notes_scored', 0) > 0 else 'text-slate-500',
-         '/voice-notes?status=Scored'),
-      ] %}
-      {% for label, val, cls, href in research_stats %}
-      <a href="{{ href }}" class="bg-slate-800 border border-slate-700 hover:border-slate-500 rounded-xl p-4 transition-colors">
-        <p class="text-2xl font-bold {{ cls }}">{{ val }}</p>
-        <p class="text-xs text-slate-500 mt-0.5">{{ label }}</p>
-      </a>
       {% end %}
     </div>
 
   </div>
 
-  <!-- Right: agents + quick links -->
+  <!-- RIGHT: 1 col ────────────────────────────────────────────────────── -->
   <div class="space-y-4">
 
-    <!-- Agent Status -->
+    <!-- ── 7. AGENT STATUS ────────────────────────────────────────────── -->
     <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
         <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Agent Status</p>
-        <a href="/agents" class="text-xs text-indigo-400 hover:text-indigo-300">All Agents →</a>
+        <a href="/agents" class="text-xs text-indigo-400 hover:text-indigo-300">All →</a>
       </div>
       {% set agents = data.get('agents') or [] %}
       {% if agents %}
@@ -183,6 +267,9 @@
           {% else %}
           <p class="text-xs text-slate-600 italic">Not run yet</p>
           {% end %}
+          {% if agent.get('last_run_at') %}
+          <p class="text-xs text-slate-700 mt-0.5">Last run: {{ (agent['last_run_at'] or '')[:10] }}</p>
+          {% end %}
           <div class="flex gap-1.5 mt-2">
             <form method="POST" action="/agents/{{ agent['id'] }}/run">
               <button type="submit" {% if not agent['enabled'] %}disabled{% end %}
@@ -203,39 +290,74 @@
       {% end %}
     </div>
 
-    <!-- Quick Links -->
+    <!-- ── Observer ───────────────────────────────────────────────────── -->
+    {% set obs_open = data.get('observer_open', 0) %}
+    <div class="bg-slate-800 border {% if obs_open > 0 %}border-amber-800/40{% else %}border-slate-700{% end %} rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Observer</p>
+        <a href="/observer" class="text-xs text-indigo-400 hover:text-indigo-300">View →</a>
+      </div>
+      {% if obs_open > 0 and data.get('observer_top') %}
+      {% set obs = data['observer_top'] %}
+      <div class="px-4 py-3">
+        <p class="text-xs text-amber-300 font-medium mb-1">⚠ {{ obs_open }} open recommendation{{ 's' if obs_open > 1 else '' }}</p>
+        <p class="text-xs text-white font-medium truncate">{{ obs.get('bottleneck', '') }}</p>
+        {% if obs.get('recommendation') %}
+        <p class="text-xs text-slate-500 mt-1 line-clamp-2">{{ obs['recommendation'][:120] }}</p>
+        {% end %}
+        <a href="/observer" class="inline-block mt-2 text-xs text-indigo-400 hover:text-indigo-300">View recommendations →</a>
+      </div>
+      {% else %}
+      <div class="px-4 py-4 text-center">
+        <p class="text-xs text-slate-600">No open recommendations.</p>
+        <a href="/observer" class="text-xs text-slate-500 hover:text-white mt-1 inline-block">View Observer →</a>
+      </div>
+      {% end %}
+    </div>
+
+    <!-- ── 8. QUICK LINKS ─────────────────────────────────────────────── -->
     <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
       <div class="px-4 py-3 border-b border-slate-700">
         <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Quick Links</p>
       </div>
       <div class="divide-y divide-slate-700 text-sm">
-        {% set open_tasks = data.get('tasks_open', 0) %}
-        {% set queue_new = data.get('research_queue_new', 0) %}
+        {% set sq_ab    = data.get('sq_tier_a', 0) + data.get('sq_tier_b', 0) %}
+        {% set q_review = data.get('queue_needs_review', 0) %}
+        {% set t_open   = data.get('tasks_open', 0) %}
+        {% set obs_n    = data.get('observer_open', 0) %}
         <a href="/research/url" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
-          <span class="text-slate-300">Add Source / URL</span><span class="text-slate-500 text-xs">→</span>
+          <span class="text-slate-300">Add Research Source</span><span class="text-slate-500 text-xs">→</span>
         </a>
-        <a href="/research" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
-          <span class="text-slate-300">Research Hub</span><span class="text-slate-500 text-xs">→</span>
+        <a href="/sources" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Source Queue</span>
+          <span class="text-{% if sq_ab > 0 %}green-400{% else %}slate-500{% end %} text-xs">{{ sq_ab }} A/B</span>
         </a>
         <a href="/research/queue" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
-          <span class="text-slate-300">Candidate Review Queue</span>
-          <span class="text-{% if queue_new > 0 %}blue-400{% else %}slate-500{% end %} text-xs">{{ queue_new }} new</span>
+          <span class="text-slate-300">Review Queue</span>
+          <span class="text-{% if q_review > 0 %}amber-400{% else %}slate-500{% end %} text-xs">{{ q_review }} need review</span>
         </a>
         <a href="/tasks" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
           <span class="text-slate-300">Action Queue</span>
-          <span class="text-{% if open_tasks > 0 %}amber-400{% else %}slate-500{% end %} text-xs">{{ open_tasks }} open</span>
+          <span class="text-{% if t_open > 0 %}amber-400{% else %}slate-500{% end %} text-xs">{{ t_open }} open</span>
+        </a>
+        <a href="/candidates" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Candidates</span>
+          <span class="text-slate-500 text-xs">{{ data.get('candidates_total', 0) }} total</span>
         </a>
         <a href="/observer" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
-          <span class="text-slate-300">Observer Agent</span><span class="text-slate-500 text-xs">→</span>
+          <span class="text-slate-300">Observer</span>
+          <span class="text-{% if obs_n > 0 %}amber-400{% else %}slate-500{% end %} text-xs">{{ obs_n }} open</span>
         </a>
         <a href="/search-missions" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
           <span class="text-slate-300">Search Missions</span><span class="text-slate-500 text-xs">→</span>
+        </a>
+        <a href="/tasks/new" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">+ New Task</span><span class="text-slate-500 text-xs">→</span>
         </a>
       </div>
     </div>
 
   </div>
-
 </div>
 
 {% end %}

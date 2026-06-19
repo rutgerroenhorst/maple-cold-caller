@@ -313,6 +313,72 @@ def get_candidate(cid):
     return row
 
 
+def get_candidate_tasks(cid: int) -> list:
+    """
+    All action_tasks linked to a candidate, ordered: active first
+    (Pending → Copied → Sent → Needs Review → Blocked → Rescheduled → Completed → Rejected),
+    then by priority, then created_at.
+    """
+    conn = get_db()
+    try:
+        rows = to_list(conn.execute("""
+            SELECT * FROM action_tasks
+            WHERE related_type='candidate' AND related_id=?
+            ORDER BY
+              CASE status
+                WHEN 'Pending'      THEN 0
+                WHEN 'Copied'       THEN 1
+                WHEN 'Sent'         THEN 2
+                WHEN 'Needs Review' THEN 3
+                WHEN 'Blocked'      THEN 4
+                WHEN 'Rescheduled'  THEN 5
+                WHEN 'Completed'    THEN 6
+                ELSE 7
+              END,
+              CASE priority
+                WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3
+              END,
+              created_at ASC
+        """, (cid,)).fetchall())
+    except Exception:
+        rows = []
+    conn.close()
+    return rows
+
+
+def get_candidate_source_context(cid: int) -> dict:
+    """
+    Look up source queue or research queue entry linked to this candidate.
+    Returns a dict with optional keys: 'source_queue', 'research_queue'.
+    Safe if tables don't exist or fields are missing.
+    """
+    conn = get_db()
+    ctx = {}
+    try:
+        row = conn.execute(
+            "SELECT id, name, source_type, profile_url, score, tier, status, reasons_json "
+            "FROM candidate_source_queue WHERE candidate_id=? LIMIT 1",
+            (cid,)
+        ).fetchone()
+        if row:
+            ctx['source_queue'] = to_dict(row)
+    except Exception:
+        pass
+    try:
+        row = conn.execute(
+            "SELECT id, name, source, score, level, status, possible_profile_url, "
+            "detected_role, confidence_score, notes "
+            "FROM candidate_research_queue WHERE linked_candidate_id=? LIMIT 1",
+            (cid,)
+        ).fetchone()
+        if row:
+            ctx['research_queue'] = to_dict(row)
+    except Exception:
+        pass
+    conn.close()
+    return ctx
+
+
 def create_candidate(data):
     conn = get_db()
     fields = ['full_name','profile_url','platform_source','current_role','email','phone',
@@ -2323,6 +2389,9 @@ def init_action_tasks_table():
     );
     """)
     conn.commit()
+    # Migrate any legacy 'Open' tasks to 'Pending' (idempotent)
+    conn.execute("UPDATE action_tasks SET status='Pending' WHERE status='Open'")
+    conn.commit()
     conn.close()
 
 
@@ -3817,7 +3886,7 @@ def approve_voice_note(vn_id: int) -> dict:
             'title':        f'Plan Test Call — {name}',
             'description':  f'Voice note approved. Score: {score}/100 ({dec}). {verdict}'.strip(),
             'priority':     'High' if dec == 'A-Candidate' else 'Medium',
-            'status':       'Open',
+            'status':       'Pending',
             'owner':        'Rutger',
             'related_type': 'voice_note_screen',
             'related_id':   vn_id,
@@ -3846,7 +3915,7 @@ def reject_voice_note(vn_id: int, reason: str = '') -> dict:
             'title':        f'Reject Candidate — {name}',
             'description':  reason or f'Voice note rejected. Score: {row.get("total_voice_score", 0)}/100 ({row.get("voice_decision", "")}).',
             'priority':     'Low',
-            'status':       'Open',
+            'status':       'Pending',
             'owner':        'Rutger',
             'related_type': 'voice_note_screen',
             'related_id':   vn_id,
@@ -3876,92 +3945,134 @@ def get_dashboard_data() -> dict:
 
     d = {}
 
-    # ── Pipeline counts ────────────────────────────────────────────────────────
-    d['candidates_total'] = _c("SELECT COUNT(*) FROM cold_caller_candidates")
-    d['candidates_new'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='found'")
+    # ── Candidate pipeline ────────────────────────────────────────────────────
+    d['candidates_total']     = _c("SELECT COUNT(*) FROM cold_caller_candidates")
+    d['candidates_new']       = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='found'")
     d['candidates_contacted'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='contacted'")
-    d['candidates_replied'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='replied'")
+    d['candidates_replied']   = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='replied'")
+    d['candidates_qualified'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='qualified'")
     d['candidates_interview'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='interview'")
-    d['candidates_placed'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='placed'")
-    d['candidates_rejected'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='rejected'")
+    d['candidates_placed']    = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='placed'")
+    d['candidates_rejected']  = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='rejected'")
 
-    # ── Research ──────────────────────────────────────────────────────────────
-    d['research_sources_unprocessed'] = _c(
-        "SELECT COUNT(*) FROM candidate_sources WHERE processed=0")
-    d['research_queue_new'] = _c(
-        "SELECT COUNT(*) FROM candidate_research_queue WHERE status='New'")
-    d['research_queue_needs_review'] = _c(
-        "SELECT COUNT(*) FROM candidate_research_queue WHERE status='Needs Review'")
-    d['research_queue_approved'] = _c(
-        "SELECT COUNT(*) FROM candidate_research_queue WHERE status='Approved'")
+    # ── Research pipeline ─────────────────────────────────────────────────────
+    d['sources_total']           = _c("SELECT COUNT(*) FROM candidate_sources")
+    d['sources_unprocessed']     = _c("SELECT COUNT(*) FROM candidate_sources WHERE processed=0")
+    d['sources_needs_fetch']     = _c("SELECT COUNT(*) FROM candidate_sources WHERE fetch_status IN ('Not Fetched','')")
+    d['sources_blocked']         = _c("SELECT COUNT(*) FROM candidate_sources WHERE fetch_status IN ('Blocked','Needs Manual Review')")
+    d['queue_total']             = _c("SELECT COUNT(*) FROM candidate_research_queue")
+    d['queue_new']               = _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='New'")
+    d['queue_needs_review']      = _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Needs Review'")
+    d['queue_approved']          = _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Approved'")
+    d['queue_moved']             = _c("SELECT COUNT(*) FROM candidate_research_queue WHERE status='Moved To Candidates'")
+    d['queue_blocked']           = _c("SELECT COUNT(*) FROM candidate_research_queue WHERE enrichment_status IN ('Blocked','Needs Manual Review')")
+    # keep legacy keys for any existing code
+    d['research_sources_unprocessed'] = d['sources_unprocessed']
+    d['research_queue_new']           = d['queue_new']
+    d['research_queue_needs_review']  = d['queue_needs_review']
+    d['research_queue_approved']      = d['queue_approved']
+
+    # ── Source queue (candidate_source_queue) ─────────────────────────────────
+    d['sq_total']     = _c("SELECT COUNT(*) FROM candidate_source_queue")
+    d['sq_queued']    = _c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='queued'")
+    d['sq_tier_a']    = _c("SELECT COUNT(*) FROM candidate_source_queue WHERE tier='A' AND status='queued'")
+    d['sq_tier_b']    = _c("SELECT COUNT(*) FROM candidate_source_queue WHERE tier='B' AND status='queued'")
+    d['sq_approved']  = _c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='approved'")
+    d['sq_converted'] = _c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='converted'")
+    d['sq_rejected']  = _c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='rejected'")
 
     # ── Action tasks ──────────────────────────────────────────────────────────
+    _ACTIVE = "status NOT IN ('Completed','Rejected')"
+    _PRIO   = "CASE priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END"
     try:
-        d['tasks_open'] = _c("SELECT COUNT(*) FROM action_tasks WHERE status='Open'")
-        d['tasks_overdue'] = _c(
-            "SELECT COUNT(*) FROM action_tasks WHERE status='Open' "
-            "AND due_date IS NOT NULL AND due_date < datetime('now')")
-        d['tasks_needs_approval'] = _c(
-            "SELECT COUNT(*) FROM action_tasks WHERE status='Needs Approval'")
-        # Top overdue task
-        overdue = conn.execute(
-            "SELECT * FROM action_tasks WHERE status='Open' "
-            "AND due_date IS NOT NULL AND due_date < datetime('now') "
-            "ORDER BY priority DESC, due_date ASC LIMIT 1"
+        d['tasks_pending']        = _c("SELECT COUNT(*) FROM action_tasks WHERE status='Pending'")
+        d['tasks_open']           = _c(f"SELECT COUNT(*) FROM action_tasks WHERE {_ACTIVE}")
+        d['tasks_overdue']        = _c(
+            f"SELECT COUNT(*) FROM action_tasks WHERE {_ACTIVE} "
+            "AND due_date IS NOT NULL AND due_date < date('now')")
+        d['tasks_due_today']      = _c(
+            f"SELECT COUNT(*) FROM action_tasks WHERE {_ACTIVE} "
+            "AND due_date = date('now')")
+        d['tasks_copied']         = _c("SELECT COUNT(*) FROM action_tasks WHERE status='Copied'")
+        d['tasks_sent']           = _c("SELECT COUNT(*) FROM action_tasks WHERE status='Sent'")
+        d['tasks_completed_today']= _c(
+            "SELECT COUNT(*) FROM action_tasks WHERE status='Completed' "
+            "AND completed_at >= date('now')")
+        d['tasks_blocked']        = _c(
+            "SELECT COUNT(*) FROM action_tasks WHERE status IN ('Blocked','Needs Review')")
+        # Top overdue task (Critical/High first)
+        overdue_row = conn.execute(
+            f"SELECT * FROM action_tasks WHERE {_ACTIVE} "
+            "AND due_date IS NOT NULL AND due_date < date('now') "
+            f"ORDER BY {_PRIO}, due_date ASC LIMIT 1"
         ).fetchone()
-        d['top_overdue_task'] = to_dict(overdue)
-        # Top open task (highest priority)
+        d['top_overdue_task'] = to_dict(overdue_row)
+        # Top due-today task
+        today_row = conn.execute(
+            f"SELECT * FROM action_tasks WHERE {_ACTIVE} "
+            "AND due_date = date('now') "
+            f"ORDER BY {_PRIO}, created_at ASC LIMIT 1"
+        ).fetchone()
+        d['top_today_task'] = to_dict(today_row)
+        # Top pending task overall
         top_task = conn.execute(
-            "SELECT * FROM action_tasks WHERE status='Open' "
-            "ORDER BY CASE priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, "
-            "due_date ASC LIMIT 1"
+            f"SELECT * FROM action_tasks WHERE status='Pending' "
+            f"ORDER BY {_PRIO}, created_at ASC LIMIT 1"
         ).fetchone()
         d['top_task'] = to_dict(top_task)
+        # Tasks copied and ready to send
+        d['tasks_ready_to_send'] = to_list(conn.execute(
+            "SELECT id, title, task_type, priority FROM action_tasks "
+            "WHERE status='Copied' ORDER BY created_at ASC LIMIT 5"
+        ).fetchall())
     except Exception:
-        d['tasks_open'] = 0
-        d['tasks_overdue'] = 0
-        d['tasks_needs_approval'] = 0
-        d['top_overdue_task'] = None
-        d['top_task'] = None
+        d['tasks_pending'] = d['tasks_open'] = d['tasks_overdue'] = 0
+        d['tasks_due_today'] = d['tasks_copied'] = d['tasks_sent'] = 0
+        d['tasks_completed_today'] = d['tasks_blocked'] = 0
+        d['top_overdue_task'] = d['top_today_task'] = d['top_task'] = None
+        d['tasks_ready_to_send'] = []
 
     # ── Voice notes ───────────────────────────────────────────────────────────
     try:
         d['voice_notes_pending'] = _c(
             "SELECT COUNT(*) FROM voice_note_screens WHERE status IN ('Pending','Transcribed')")
-        d['voice_notes_scored'] = _c(
+        d['voice_notes_scored']  = _c(
             "SELECT COUNT(*) FROM voice_note_screens WHERE status='Scored'")
-        d['voice_notes_a'] = _c(
+        d['voice_notes_a']       = _c(
             "SELECT COUNT(*) FROM voice_note_screens WHERE voice_decision='A-Candidate'")
     except Exception:
-        d['voice_notes_pending'] = 0
-        d['voice_notes_scored'] = 0
-        d['voice_notes_a'] = 0
+        d['voice_notes_pending'] = d['voice_notes_scored'] = d['voice_notes_a'] = 0
 
-    # ── Observer / agents ──────────────────────────────────────────────────────
+    # ── Observer ──────────────────────────────────────────────────────────────
     try:
         d['observer_open'] = _c(
-            "SELECT COUNT(*) FROM agent_logs "
-            "WHERE issue != '' AND issue IS NOT NULL "
-            "AND created_at > datetime('now', '-1 day')")
+            "SELECT COUNT(*) FROM observer_recommendations WHERE status='open'")
+        obs_top = conn.execute(
+            "SELECT * FROM observer_recommendations WHERE status='open' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        d['observer_top'] = to_dict(obs_top)
     except Exception:
         d['observer_open'] = 0
+        d['observer_top'] = None
 
+    # ── Agents ────────────────────────────────────────────────────────────────
     try:
-        agents = to_list(conn.execute(
-            "SELECT id, name, type, enabled, last_run_at, latest_output, current_issue, recommendation "
-            "FROM agents ORDER BY type").fetchall())
-        d['agents'] = agents
+        d['agents'] = to_list(conn.execute(
+            "SELECT id, name, type, enabled, last_run_at, latest_output, "
+            "current_issue, recommendation FROM agents ORDER BY type"
+        ).fetchall())
     except Exception:
         d['agents'] = []
 
-    # ── "Needs Approval" items ────────────────────────────────────────────────
+    # ── "Needs Your Approval" items ───────────────────────────────────────────
     needs_approval = []
+    # 1. Research queue: New + Needs Review
     try:
-        rq_review = to_list(conn.execute(
+        for r in to_list(conn.execute(
             "SELECT id, name, score, level, status FROM candidate_research_queue "
             "WHERE status IN ('New','Needs Review') ORDER BY score DESC LIMIT 5"
-        ).fetchall())
-        for r in rq_review:
+        ).fetchall()):
             needs_approval.append({
                 'type': 'Research Candidate',
                 'label': r['name'],
@@ -3970,100 +4081,192 @@ def get_dashboard_data() -> dict:
             })
     except Exception:
         pass
+    # 2. Action tasks: Copied (ready to send) + Blocked/Needs Review
     try:
-        approval_tasks = to_list(conn.execute(
-            "SELECT id, title, task_type, priority FROM action_tasks "
-            "WHERE status='Needs Approval' ORDER BY "
+        for t in to_list(conn.execute(
+            "SELECT id, title, task_type, priority, status FROM action_tasks "
+            "WHERE status IN ('Copied','Blocked','Needs Review') "
+            "ORDER BY CASE status WHEN 'Copied' THEN 0 WHEN 'Needs Review' THEN 1 ELSE 2 END, "
             "CASE priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 ELSE 2 END LIMIT 5"
-        ).fetchall())
-        for t in approval_tasks:
+        ).fetchall()):
             needs_approval.append({
-                'type': t['task_type'],
+                'type': t['task_type'] or 'Task',
                 'label': t['title'],
-                'detail': f"Priority: {t['priority']}",
+                'detail': f"Status: {t['status']} — Priority: {t['priority']}",
                 'url': f"/tasks/{t['id']}",
             })
     except Exception:
         pass
+    # 3. Voice notes scored but not approved/rejected
     try:
-        vn_scored = to_list(conn.execute(
+        for v in to_list(conn.execute(
             "SELECT id, candidate_name, total_voice_score, voice_decision "
-            "FROM voice_note_screens WHERE status='Scored' ORDER BY total_voice_score DESC LIMIT 3"
-        ).fetchall())
-        for v in vn_scored:
+            "FROM voice_note_screens WHERE status='Scored' "
+            "ORDER BY total_voice_score DESC LIMIT 3"
+        ).fetchall()):
             needs_approval.append({
-                'type': 'Voice Note Review',
+                'type': 'Voice Note',
                 'label': v['candidate_name'],
                 'detail': f"Score {v['total_voice_score']}/100 — {v['voice_decision']}",
                 'url': f"/voice-notes/{v['id']}",
             })
     except Exception:
         pass
+    # 4. Source queue: approved but not yet converted to candidate
+    try:
+        for s in to_list(conn.execute(
+            "SELECT id, name, tier, score FROM candidate_source_queue "
+            "WHERE status='approved' AND candidate_id IS NULL LIMIT 3"
+        ).fetchall()):
+            needs_approval.append({
+                'type': 'Source Approved',
+                'label': s['name'],
+                'detail': f"Tier {s['tier']} — Score {s['score']} — needs candidate creation",
+                'url': f"/sources/{s['id']}",
+            })
+    except Exception:
+        pass
     d['needs_approval'] = needs_approval
 
-    # ── Highest ROI action ────────────────────────────────────────────────────
+    # ── Highest ROI action ─────────────────────────────────────────────────────
+    # Priority chain:
+    # 1. Overdue Critical/High task
+    # 2. Task due today
+    # 3. Source queue A/B tier candidates queued
+    # 4. Research queue Needs Review
+    # 5. Research queue New
+    # 6. Unprocessed research sources
+    # 7. Open observer recommendations
+    # 8. Default: add source / run agent
     roi = None
-    if d.get('tasks_overdue', 0) > 0 and d.get('top_overdue_task'):
+    _overdue_critical = _c(
+        "SELECT COUNT(*) FROM action_tasks "
+        "WHERE status NOT IN ('Completed','Rejected') "
+        "AND due_date IS NOT NULL AND due_date < date('now') "
+        "AND priority IN ('Critical','High')"
+    )
+    if _overdue_critical > 0 and d.get('top_overdue_task'):
         t = d['top_overdue_task']
         roi = {
-            'title': 'Overdue Task',
-            'description': t.get('title', 'A task is overdue'),
-            'action_label': 'Open Task',
+            'title': 'Overdue Critical/High Task',
+            'reason': f"Task has passed its due date — priority: {t.get('priority','?')}",
+            'action_label': 'Open Task →',
             'action_url': f"/tasks/{t['id']}",
             'secondary_label': 'All Tasks',
             'secondary_url': '/tasks',
             'level': 'urgent',
         }
-    elif d.get('research_queue_needs_review', 0) > 0:
+    elif d.get('tasks_overdue', 0) > 0 and d.get('top_overdue_task'):
+        t = d['top_overdue_task']
         roi = {
-            'title': 'Candidates Need Review',
-            'description': f"{d['research_queue_needs_review']} candidate(s) in the review queue need your attention.",
-            'action_label': 'Review Candidates',
+            'title': 'Overdue Task',
+            'reason': f"\"{t.get('title','Task')}\" passed its due date",
+            'action_label': 'Open Task →',
+            'action_url': f"/tasks/{t['id']}",
+            'secondary_label': 'All Tasks',
+            'secondary_url': '/tasks',
+            'level': 'urgent',
+        }
+    elif d.get('tasks_due_today', 0) > 0 and d.get('top_today_task'):
+        t = d['top_today_task']
+        roi = {
+            'title': 'Task Due Today',
+            'reason': f"\"{t.get('title','Task')}\" is due today",
+            'action_label': 'Open Task →',
+            'action_url': f"/tasks/{t['id']}",
+            'secondary_label': 'All Tasks',
+            'secondary_url': '/tasks',
+            'level': 'high',
+        }
+    elif d.get('sq_tier_a', 0) + d.get('sq_tier_b', 0) > 0:
+        n = d['sq_tier_a'] + d['sq_tier_b']
+        roi = {
+            'title': 'Source Queue: A/B Candidates Waiting',
+            'reason': f"{n} high-scoring profile(s) in the source queue need review",
+            'action_label': 'Review Source Queue →',
+            'action_url': '/sources',
+            'secondary_label': 'Add Profile',
+            'secondary_url': '/sources/new',
+            'level': 'high',
+        }
+    elif d.get('queue_needs_review', 0) > 0:
+        roi = {
+            'title': 'Research Queue: Candidates Need Review',
+            'reason': f"{d['queue_needs_review']} candidate(s) flagged for your review",
+            'action_label': 'Review Candidates →',
             'action_url': '/research/queue?status=Needs+Review',
             'secondary_label': 'All Queue',
             'secondary_url': '/research/queue',
             'level': 'high',
         }
-    elif d.get('research_queue_new', 0) > 0:
+    elif d.get('queue_new', 0) > 0:
         roi = {
-            'title': 'New Candidates in Queue',
-            'description': f"{d['research_queue_new']} new candidate(s) waiting for review.",
-            'action_label': 'Open Review Queue',
+            'title': 'New Candidates in Research Queue',
+            'reason': f"{d['queue_new']} new candidate(s) waiting for your decision",
+            'action_label': 'Open Review Queue →',
             'action_url': '/research/queue',
             'secondary_label': 'Research Hub',
             'secondary_url': '/research',
             'level': 'medium',
         }
-    elif d.get('research_sources_unprocessed', 0) > 0:
+    elif d.get('sources_unprocessed', 0) > 0:
         roi = {
-            'title': 'Unprocessed Sources',
-            'description': f"{d['research_sources_unprocessed']} source(s) waiting to be processed.",
-            'action_label': 'Process Sources',
+            'title': 'Unprocessed Research Sources',
+            'reason': f"{d['sources_unprocessed']} source(s) haven't been processed yet",
+            'action_label': 'Process Sources →',
             'action_url': '/research/sources',
             'secondary_label': 'Add Source',
             'secondary_url': '/research/url',
             'level': 'medium',
         }
-    elif d.get('voice_notes_scored', 0) > 0:
+    elif d.get('observer_open', 0) > 0 and d.get('observer_top'):
+        obs = d['observer_top']
         roi = {
-            'title': 'Voice Notes Need Review',
-            'description': f"{d['voice_notes_scored']} scored voice note(s) waiting for approval.",
-            'action_label': 'Review Voice Notes',
-            'action_url': '/voice-notes?status=Scored',
-            'secondary_label': 'Screen New',
-            'secondary_url': '/voice-notes/new',
+            'title': 'Observer Recommendation Open',
+            'reason': obs.get('bottleneck') or 'Observer has flagged a bottleneck',
+            'action_label': 'View Observer →',
+            'action_url': '/observer',
+            'secondary_label': None,
+            'secondary_url': None,
             'level': 'medium',
         }
-    else:
+    elif d.get('candidates_total', 0) == 0:
         roi = {
-            'title': 'Find Candidates',
-            'description': 'Run the Candidate Research Worker to find new sales talent.',
-            'action_label': 'Add Source',
+            'title': 'Get Started: Add Your First Source',
+            'reason': 'No candidates yet — add a LinkedIn URL or paste a profile to begin',
+            'action_label': 'Add Research Source →',
             'action_url': '/research/url',
-            'secondary_label': 'Research Hub',
-            'secondary_url': '/research',
+            'secondary_label': 'Paste Profile',
+            'secondary_url': '/sources/new',
             'level': 'info',
         }
+    else:
+        # Find the candidate research worker agent
+        crw = None
+        for ag in d.get('agents', []):
+            if 'research' in (ag.get('type') or '').lower() or 'research' in (ag.get('name') or '').lower():
+                crw = ag
+                break
+        if crw:
+            roi = {
+                'title': 'Run Candidate Research Worker',
+                'reason': 'No urgent actions — run the agent to find new candidates',
+                'action_label': 'Run Agent →',
+                'action_url': f"/agents/{crw['id']}/run",
+                'secondary_label': 'All Agents',
+                'secondary_url': '/agents',
+                'level': 'info',
+            }
+        else:
+            roi = {
+                'title': 'Add a Research Source',
+                'reason': 'No urgent actions — add a source URL to find new candidates',
+                'action_label': 'Add Source →',
+                'action_url': '/research/url',
+                'secondary_label': 'Research Hub',
+                'secondary_url': '/research',
+                'level': 'info',
+            }
     d['highest_roi'] = roi
 
     conn.close()
@@ -4518,7 +4721,7 @@ def approve_source(sid: int) -> dict:
             'title':        f'Review approved source — {src["name"]}',
             'description':  f'Source approved from {src.get("source_type","Manual")}. Candidate created. Score: {src.get("score",0)} ({src.get("tier","?")}).',
             'priority':     'High' if src.get('tier') == 'A' else 'Medium',
-            'status':       'Open',
+            'status':       'Pending',
             'owner':        'Rutger',
             'related_type': 'candidate',
             'related_id':   candidate_id,
