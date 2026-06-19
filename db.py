@@ -4068,3 +4068,478 @@ def get_dashboard_data() -> dict:
 
     conn.close()
     return d
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CANDIDATE SOURCE QUEUE — input parser + rule-based scorer
+# ══════════════════════════════════════════════════════════════════════════════
+
+def init_source_queue_table():
+    conn = get_db()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS candidate_source_queue (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        name               TEXT NOT NULL,
+        source_type        TEXT DEFAULT 'Manual',
+        profile_url        TEXT,
+        raw_profile_text   TEXT,
+        parsed_json        TEXT,
+        score              INTEGER DEFAULT 0,
+        tier               TEXT DEFAULT 'Unscored',
+        reasons_json       TEXT,
+        recommended_action TEXT,
+        notes              TEXT,
+        status             TEXT DEFAULT 'queued',
+        candidate_id       INTEGER,
+        created_at         TEXT DEFAULT (datetime('now')),
+        updated_at         TEXT DEFAULT (datetime('now'))
+    );
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _parse_source_profile(text: str) -> dict:
+    """Extract structured signals from raw profile text. Pure rule-based, no AI."""
+    import re
+    text_lower = (text or '').lower()
+
+    parsed = {
+        'role': None,
+        'location': None,
+        'language_signals': [],
+        'sales_signals': [],
+        'remote_signals': [],
+        'red_flags': [],
+        'has_proof': False,
+    }
+
+    if not text_lower.strip():
+        return parsed
+
+    # Role/title — first non-empty line or explicit label
+    for pattern in [
+        r'(?:role|title|functie|position|werkzaam als|werkt als)[:\s]+([^\n,]{3,80})',
+        r'^([A-Z][^\n]{3,60})$',
+    ]:
+        m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if m:
+            parsed['role'] = m.group(1).strip()[:100]
+            break
+
+    # Location (Dutch cities + country signals)
+    dutch_locations = [
+        'amsterdam', 'rotterdam', 'den haag', 'the hague', 'utrecht',
+        'eindhoven', 'groningen', 'breda', 'tilburg', 'almere',
+        'nijmegen', 'apeldoorn', 'haarlem', 'arnhem', 'enschede',
+        'leiden', 'zoetermeer', 'maastricht', 'zwolle', 'alkmaar',
+        'nederland', 'netherlands', 'holland',
+    ]
+    for loc in dutch_locations:
+        if loc in text_lower:
+            parsed['location'] = loc
+            break
+    # Also detect standalone NL (not as part of URL)
+    if not parsed['location'] and re.search(r'\bNL\b', text):
+        parsed['location'] = 'nl'
+
+    # Dutch language signals
+    dutch_words = [
+        'ik ben', 'ik heb', 'mijn ', 'jaar ervaring', 'werkzaam',
+        'acquisitie', 'verkoop', 'bellen', 'klanten', 'bedrijven',
+        'afsluiten', 'offertes', 'omzet', 'provisie', 'thuiswerk',
+    ]
+    for w in dutch_words:
+        if w in text_lower:
+            parsed['language_signals'].append(f'NL: "{w.strip()}"')
+
+    # Sales experience signals
+    sales_keywords = {
+        'cold call':                    'cold calling',
+        'cold calling':                 'cold calling',
+        'appointment setting':          'appointment setting',
+        'appointment setter':           'appointment setting',
+        'acquisitie':                   'cold calling (NL)',
+        'telefonische acquisitie':      'cold calling (NL)',
+        'telefonische verkoop':         'cold calling (NL)',
+        'b2b':                          'B2B sales',
+        'business to business':         'B2B sales',
+        'closer':                       'sales closer',
+        'closing':                      'sales closer',
+        'high ticket':                  'high-ticket sales',
+        'high-ticket':                  'high-ticket sales',
+        'recruitment':                  'recruitment/staffing',
+        'recruiter':                    'recruitment/staffing',
+        'headhunter':                   'recruitment/staffing',
+        'account manager':              'account management',
+        'account management':           'account management',
+        'business development':         'business development',
+        'lead generation':              'lead generation',
+        'lead gen':                     'lead generation',
+        'outbound':                     'outbound sales',
+        'inside sales':                 'inside sales',
+        'field sales':                  'field sales',
+        'outdoor sales':                'outdoor/field sales',
+        'd2d':                          'door-to-door',
+        'door to door':                 'door-to-door',
+        'deur aan deur':                'door-to-door (NL)',
+        'sales':                        'general sales',
+        'verkoop':                      'sales (NL)',
+        'vertegenwoordiger':            'sales rep (NL)',
+        'commercieel':                  'commercial (NL)',
+        'telesales':                    'telesales',
+        'televerkoop':                  'telesales (NL)',
+    }
+    found_labels = set()
+    for kw, label in sales_keywords.items():
+        if kw in text_lower and label not in found_labels:
+            parsed['sales_signals'].append(label)
+            found_labels.add(label)
+
+    # Remote / freelance / commission signals
+    remote_kw = [
+        'remote', 'freelance', 'zzp', 'zelfstandig', 'commission only',
+        'op commissie', 'provisie', 'no cure no pay', 'thuiswerk',
+        'work from home', 'hybride', 'flexibel',
+    ]
+    for kw in remote_kw:
+        if kw in text_lower:
+            parsed['remote_signals'].append(kw)
+
+    # Proof / quantified results
+    import re as _re
+    if _re.search(r'\d+\s*[%x×]\s*|\d+\s*(?:afspraken|deals|appointments|klanten|opdrachtgevers|omzet|revenue)', text_lower):
+        parsed['has_proof'] = True
+    if _re.search(r'(?:behaald|gerealiseerd|gescoord|closed|booked)\s+\d+', text_lower):
+        parsed['has_proof'] = True
+
+    # Red flags
+    student_kw = ['student', 'studerend', 'afstuderen', 'stage', 'internship', 'bijbaan']
+    for kw in student_kw:
+        if kw in text_lower:
+            parsed['red_flags'].append(f'student/education: "{kw}"')
+
+    vague_kw = ['motivated', 'enthusiastic', 'hardworking', 'eager to learn',
+                'team player', 'gemotiveerd', 'enthousiast', 'hands-on',
+                'bereid om te leren', 'leergierig', 'proactief']
+    vague_count = sum(1 for v in vague_kw if v in text_lower)
+    if vague_count >= 2:
+        parsed['red_flags'].append('vague profile (buzzwords, no concrete experience)')
+
+    if not parsed['sales_signals'] and len(text_lower.strip()) > 30:
+        parsed['red_flags'].append('no sales or cold calling signals detected')
+
+    return parsed
+
+
+def _score_source(parsed: dict) -> tuple:
+    """
+    Returns (score: int 0-100, tier: str, reasons: list[str], recommended_action: str)
+    Pure arithmetic — no API calls.
+    """
+    score = 0
+    reasons = []
+
+    # Dutch language signals → +30
+    if parsed.get('language_signals'):
+        score += 30
+        reasons.append('+30 Dutch language signals detected')
+    elif parsed.get('location') in ('nederland', 'netherlands', 'holland', 'nl',
+                                    'amsterdam', 'rotterdam', 'den haag', 'the hague',
+                                    'utrecht', 'eindhoven', 'groningen'):
+        score += 10
+        reasons.append('+10 Located in Netherlands')
+
+    # Cold calling / appointment setting → +25
+    cold_labels = {'cold calling', 'appointment setting', 'cold calling (nl)', 'telesales', 'telesales (nl)'}
+    if cold_labels & set(parsed.get('sales_signals', [])):
+        score += 25
+        reasons.append('+25 Cold calling / appointment setting experience')
+
+    # B2B → +20
+    b2b_labels = {'B2B sales', 'business development', 'account management', 'outbound sales', 'inside sales'}
+    if b2b_labels & set(parsed.get('sales_signals', [])):
+        score += 20
+        reasons.append('+20 B2B / business development experience')
+
+    # Closer / high-ticket / recruitment → +15
+    premium_labels = {'sales closer', 'high-ticket sales', 'recruitment/staffing'}
+    if premium_labels & set(parsed.get('sales_signals', [])):
+        score += 15
+        reasons.append('+15 Closer / high-ticket / recruitment experience')
+
+    # General sales without above specifics → +5
+    general_labels = {'general sales', 'sales (nl)', 'sales rep (nl)', 'commercial (nl)',
+                      'lead generation', 'field sales', 'outdoor/field sales',
+                      'door-to-door', 'door-to-door (nl)'}
+    if general_labels & set(parsed.get('sales_signals', [])):
+        score += 5
+        reasons.append('+5 General sales experience')
+
+    # Remote / freelance / commission → +10
+    if parsed.get('remote_signals'):
+        score += 10
+        reasons.append('+10 Remote / freelance / commission signal')
+
+    # Proof / quantified results → +10
+    if parsed.get('has_proof'):
+        score += 10
+        reasons.append('+10 Quantified results / proof of performance')
+
+    # Deductions
+    if not parsed.get('sales_signals'):
+        score -= 25
+        reasons.append('-25 No sales or cold calling signals detected')
+
+    student_flags = [f for f in parsed.get('red_flags', []) if 'student' in f]
+    if student_flags:
+        score -= 10
+        reasons.append('-10 Student / education signal detected')
+
+    vague_flags = [f for f in parsed.get('red_flags', []) if 'vague' in f]
+    if vague_flags:
+        score -= 10
+        reasons.append('-10 Vague profile — only buzzwords, no concrete experience')
+
+    score = max(0, min(100, score))
+
+    if score >= 75:
+        tier = 'A'
+        action = 'Strong signal — approve and move to candidate pipeline immediately.'
+    elif score >= 55:
+        tier = 'B'
+        action = 'Good signal — review profile manually and approve if satisfied.'
+    elif score >= 35:
+        tier = 'Nurture'
+        action = 'Weak signal — gather more info or check back in 2–4 weeks.'
+    else:
+        tier = 'Reject'
+        action = 'Insufficient sales signals — reject unless you have extra context.'
+
+    return score, tier, reasons, action
+
+
+def create_source_entry(data: dict) -> int:
+    """Create a new source queue entry. Runs parse + score automatically."""
+    raw_text = data.get('raw_profile_text', '') or ''
+    parsed   = _parse_source_profile(raw_text)
+    score, tier, reasons, action = _score_source(parsed)
+
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        INSERT INTO candidate_source_queue
+            (name, source_type, profile_url, raw_profile_text,
+             parsed_json, score, tier, reasons_json, recommended_action,
+             notes, status, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'queued',?,?)
+    """, (
+        data.get('name', 'Unknown'),
+        data.get('source_type', 'Manual'),
+        data.get('profile_url') or None,
+        raw_text or None,
+        json.dumps(parsed),
+        score,
+        tier,
+        json.dumps(reasons),
+        action,
+        data.get('notes') or None,
+        now(), now(),
+    ))
+    conn.commit()
+    sid = cur.lastrowid
+    conn.close()
+    return sid
+
+
+def get_source_entry(sid: int) -> dict:
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT * FROM candidate_source_queue WHERE id=?", (sid,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = to_dict(row)
+    # Decode JSON fields
+    try:
+        d['parsed']  = json.loads(d['parsed_json'] or '{}')
+    except Exception:
+        d['parsed']  = {}
+    try:
+        d['reasons'] = json.loads(d['reasons_json'] or '[]')
+    except Exception:
+        d['reasons'] = []
+    return d
+
+
+def get_source_entries(status: str = '', tier: str = '', source_type: str = '') -> list:
+    conn  = get_db()
+    where = []
+    args  = []
+    if status:
+        where.append("status=?"); args.append(status)
+    if tier:
+        where.append("tier=?"); args.append(tier)
+    if source_type:
+        where.append("source_type=?"); args.append(source_type)
+    sql = "SELECT * FROM candidate_source_queue"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY score DESC, created_at DESC"
+    rows = conn.execute(sql, args).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = to_dict(r)
+        try:
+            d['reasons'] = json.loads(d['reasons_json'] or '[]')
+        except Exception:
+            d['reasons'] = []
+        result.append(d)
+    return result
+
+
+def get_source_summary() -> dict:
+    conn = get_db()
+    def _c(sql, *args):
+        try: return conn.execute(sql, args).fetchone()[0]
+        except Exception: return 0
+    s = {
+        'total':   _c("SELECT COUNT(*) FROM candidate_source_queue"),
+        'queued':  _c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='queued'"),
+        'approved':_c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='approved'"),
+        'rejected':_c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='rejected'"),
+        'converted':_c("SELECT COUNT(*) FROM candidate_source_queue WHERE status='converted'"),
+        'tier_a':  _c("SELECT COUNT(*) FROM candidate_source_queue WHERE tier='A' AND status='queued'"),
+        'tier_b':  _c("SELECT COUNT(*) FROM candidate_source_queue WHERE tier='B' AND status='queued'"),
+        'tier_nurture': _c("SELECT COUNT(*) FROM candidate_source_queue WHERE tier='Nurture' AND status='queued'"),
+        'tier_reject':  _c("SELECT COUNT(*) FROM candidate_source_queue WHERE tier='Reject'  AND status='queued'"),
+    }
+    conn.close()
+    return s
+
+
+def rescore_source(sid: int) -> dict:
+    """Re-parse and re-score an existing entry (e.g. after editing raw text)."""
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT raw_profile_text FROM candidate_source_queue WHERE id=?", (sid,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return {'ok': False, 'error': 'Not found'}
+    raw_text = row[0] or ''
+    parsed   = _parse_source_profile(raw_text)
+    score, tier, reasons, action = _score_source(parsed)
+    conn.execute("""
+        UPDATE candidate_source_queue
+        SET parsed_json=?, score=?, tier=?, reasons_json=?, recommended_action=?, updated_at=?
+        WHERE id=?
+    """, (json.dumps(parsed), score, tier, json.dumps(reasons), action, now(), sid))
+    conn.commit()
+    conn.close()
+    return {'ok': True, 'score': score, 'tier': tier}
+
+
+def approve_source(sid: int) -> dict:
+    """
+    Approve a source entry.
+    Creates a cold_caller_candidate from the source data.
+    Returns {'ok': True, 'candidate_id': N}.
+    """
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT * FROM candidate_source_queue WHERE id=?", (sid,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return {'ok': False, 'error': 'Not found'}
+    src = to_dict(row)
+    if src['status'] in ('approved', 'converted'):
+        conn.close()
+        return {'ok': False, 'error': 'Already approved'}
+
+    # Parse stored signals to fill candidate fields
+    try:
+        parsed = json.loads(src.get('parsed_json') or '{}')
+    except Exception:
+        parsed = {}
+
+    # Map source fields → candidate fields
+    sales_sigs = parsed.get('sales_signals', [])
+
+    def _has(*labels):
+        return any(any(l in s for s in sales_sigs) for l in labels)
+
+    cold_exp   = ', '.join([s for s in sales_sigs if 'cold' in s or 'appointment' in s or 'tele' in s]) or None
+    b2b_exp    = ', '.join([s for s in sales_sigs if 'B2B' in s or 'business' in s.lower() or 'account' in s]) or None
+    close_exp  = ', '.join([s for s in sales_sigs if 'closer' in s or 'high-ticket' in s]) or None
+    proof      = 'Quantified results mentioned' if parsed.get('has_proof') else None
+
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO cold_caller_candidates
+            (full_name, profile_url, platform_source, current_role,
+             cold_calling_experience, b2b_experience, past_sales_roles,
+             proof_results, language_level, commission_only_fit,
+             notes, global_score, status, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'found',?,?)
+    """, (
+        src['name'],
+        src.get('profile_url') or None,
+        src.get('source_type', 'Manual'),
+        parsed.get('role') or None,
+        cold_exp,
+        b2b_exp,
+        ', '.join([s for s in sales_sigs if s not in (cold_exp or '') and s not in (b2b_exp or '')]) or None,
+        proof,
+        'NL' if parsed.get('language_signals') or parsed.get('location') else None,
+        1 if parsed.get('remote_signals') else 0,
+        src.get('notes') or None,
+        src.get('score', 0),
+        now(), now(),
+    ))
+    conn.commit()
+    candidate_id = cur.lastrowid
+
+    # Mark source as converted
+    conn.execute("""
+        UPDATE candidate_source_queue
+        SET status='converted', candidate_id=?, updated_at=?
+        WHERE id=?
+    """, (candidate_id, now(), sid))
+    conn.commit()
+
+    # Create a "Review Approved Source" action task
+    try:
+        create_action_task({
+            'task_type':    'Review Candidate',
+            'title':        f'Review approved source — {src["name"]}',
+            'description':  f'Source approved from {src.get("source_type","Manual")}. Candidate created. Score: {src.get("score",0)} ({src.get("tier","?")}).',
+            'priority':     'High' if src.get('tier') == 'A' else 'Medium',
+            'status':       'Open',
+            'owner':        'Rutger',
+            'related_type': 'candidate',
+            'related_id':   candidate_id,
+            'related_name': src['name'],
+        })
+    except Exception:
+        pass
+
+    conn.close()
+    return {'ok': True, 'candidate_id': candidate_id}
+
+
+def reject_source(sid: int, reason: str = '') -> dict:
+    conn = get_db()
+    conn.execute("""
+        UPDATE candidate_source_queue
+        SET status='rejected',
+            notes=CASE WHEN notes IS NULL THEN ? ELSE notes||' | Reject: '||? END,
+            updated_at=?
+        WHERE id=?
+    """, (f'Rejected: {reason}' if reason else 'Rejected', reason or '', now(), sid))
+    conn.commit()
+    conn.close()
+    return {'ok': True}

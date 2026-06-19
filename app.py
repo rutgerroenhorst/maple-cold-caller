@@ -1353,6 +1353,92 @@ class VoiceNoteRejectHandler(Base):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Candidate Source Queue
+# ──────────────────────────────────────────────────────────────────────────────
+
+class SourceQueueListHandler(Base):
+    def get(self):
+        status      = self.get_argument('status', '')
+        tier        = self.get_argument('tier', '')
+        source_type = self.get_argument('source_type', '')
+        entries  = db.get_source_entries(status=status, tier=tier, source_type=source_type)
+        summary  = db.get_source_summary()
+        self.render('sources/list.html', page='sources',
+                    entries=entries, summary=summary,
+                    filter_status=status, filter_tier=tier, filter_source=source_type)
+
+
+class SourceNewHandler(Base):
+    def get(self):
+        self.render('sources/new.html', page='sources', error=None)
+
+    def post(self):
+        name         = self.get_argument('name', '').strip()
+        source_type  = self.get_argument('source_type', 'Manual').strip()
+        profile_url  = self.get_argument('profile_url', '').strip() or None
+        raw_text     = self.get_argument('raw_profile_text', '').strip()
+        notes        = self.get_argument('notes', '').strip() or None
+
+        if not name:
+            return self.render('sources/new.html', page='sources',
+                               error='Name is required')
+
+        sid = db.create_source_entry({
+            'name':             name,
+            'source_type':      source_type,
+            'profile_url':      profile_url,
+            'raw_profile_text': raw_text,
+            'notes':            notes,
+        })
+        self.redirect(f'/sources/{sid}')
+
+
+class SourceDetailHandler(Base):
+    def get(self, sid):
+        entry = db.get_source_entry(int(sid))
+        if not entry:
+            return self.send_error(404)
+        self.render('sources/detail.html', page='sources', entry=entry)
+
+    def post(self, sid):
+        """Save notes / raw text edit, then rescore."""
+        notes    = self.get_argument('notes', '').strip() or None
+        raw_text = self.get_argument('raw_profile_text', '').strip() or None
+        conn = db.get_db()
+        conn.execute("""
+            UPDATE candidate_source_queue
+            SET notes=?, raw_profile_text=?, updated_at=?
+            WHERE id=?
+        """, (notes, raw_text, db.now(), int(sid)))
+        conn.commit()
+        conn.close()
+        db.rescore_source(int(sid))
+        self.redirect(f'/sources/{sid}')
+
+
+class SourceApproveHandler(Base):
+    def post(self, sid):
+        result = db.approve_source(int(sid))
+        if result.get('candidate_id'):
+            self.redirect(f'/candidates/{result["candidate_id"]}')
+        else:
+            self.redirect(f'/sources/{sid}')
+
+
+class SourceRejectHandler(Base):
+    def post(self, sid):
+        reason = self.get_argument('reason', '').strip()
+        db.reject_source(int(sid), reason)
+        self.redirect('/sources')
+
+
+class SourceReScoreHandler(Base):
+    def post(self, sid):
+        db.rescore_source(int(sid))
+        self.redirect(f'/sources/{sid}')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # App factory
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1364,6 +1450,7 @@ def make_app():
     db.init_action_tasks_table()
     db.migrate_phase3()   # must come after init_research_tables
     db.init_voice_note_tables()
+    db.init_source_queue_table()
     # Derive cookie secret from password (or use env override); never empty
     _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
     cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
@@ -1456,6 +1543,13 @@ def make_app():
         (r"/research/queue/([0-9]+)/manual-review",             ResearchQueueManualReviewHandler),
         (r"/research/queue/([0-9]+)/refresh-public-data",       ResearchQueueRefreshHandler),
         (r"/research/queries",                                  ResearchQueriesHandler),
+        # Candidate Source Queue
+        (r"/sources",                       SourceQueueListHandler),
+        (r"/sources/new",                   SourceNewHandler),
+        (r"/sources/([0-9]+)",              SourceDetailHandler),
+        (r"/sources/([0-9]+)/approve",      SourceApproveHandler),
+        (r"/sources/([0-9]+)/reject",       SourceRejectHandler),
+        (r"/sources/([0-9]+)/rescore",      SourceReScoreHandler),
         # Voice Note Screener
         (r"/voice-notes",                                       VoiceNoteListHandler),
         (r"/voice-notes/new",                                   VoiceNoteNewHandler),

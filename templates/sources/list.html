@@ -1,0 +1,149 @@
+{% extends "../base.html" %}
+{% block title %}Source Queue — Maple Growth OS{% end %}
+
+{% block header %}
+<div>
+  <h1 class="text-lg font-semibold text-white">Source Queue</h1>
+  <p class="text-xs text-slate-500">Paste profiles, score them automatically, approve the best ones.</p>
+</div>
+{% end %}
+
+{% block header_actions %}
+<a href="/sources/new"
+   class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + Add Source
+</a>
+{% end %}
+
+{% block content %}
+
+<!-- Stats bar -->
+<div class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3 mb-6">
+  {% set stat_items = [
+    ('Total',     str(summary['total']),          'text-slate-300',   '', ''),
+    ('Queued',    str(summary['queued']),          'text-amber-300',   'queued', ''),
+    ('Approved',  str(summary['approved']),        'text-green-300',   'approved', ''),
+    ('Converted', str(summary['converted']),       'text-teal-300',    'converted', ''),
+    ('Rejected',  str(summary['rejected']),        'text-red-400',     'rejected', ''),
+    ('A-tier',    str(summary['tier_a']),          'text-emerald-300', 'queued', 'A'),
+    ('B-tier',    str(summary['tier_b']),          'text-blue-300',    'queued', 'B'),
+    ('Nurture',   str(summary['tier_nurture']),    'text-amber-400',   'queued', 'Nurture'),
+    ('Reject',    str(summary['tier_reject']),     'text-rose-400',    'queued', 'Reject'),
+  ] %}
+  {% for label, val, cls, fstatus, ftier in stat_items %}
+  <a href="/sources{% if fstatus or ftier %}?{% if fstatus %}status={{ fstatus }}{% end %}{% if fstatus and ftier %}&{% end %}{% if ftier %}tier={{ ftier }}{% end %}{% end %}"
+     class="bg-slate-800 border border-slate-700 rounded-xl p-3 hover:border-slate-500 transition-colors text-center">
+    <p class="text-2xl font-bold {{ cls }}">{{ val }}</p>
+    <p class="text-xs text-slate-500 mt-0.5">{{ label }}</p>
+  </a>
+  {% end %}
+</div>
+
+<!-- Filters -->
+<div class="flex flex-wrap gap-2 mb-4">
+  <span class="text-xs text-slate-500 self-center">Status:</span>
+  {% for label, val in [('All',''),('Queued','queued'),('Approved','approved'),('Converted','converted'),('Rejected','rejected')] %}
+  <a href="/sources?status={{ val }}{% if filter_tier %}&tier={{ filter_tier }}{% end %}{% if filter_source %}&source_type={{ filter_source }}{% end %}"
+     class="text-xs px-3 py-1.5 rounded-full border transition-colors
+            {% if filter_status == val %}bg-indigo-600 border-indigo-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+
+  <span class="text-xs text-slate-500 self-center ml-3">Tier:</span>
+  {% for label, val in [('All',''),('A','A'),('B','B'),('Nurture','Nurture'),('Reject','Reject')] %}
+  <a href="/sources?tier={{ val }}{% if filter_status %}&status={{ filter_status }}{% end %}{% if filter_source %}&source_type={{ filter_source }}{% end %}"
+     class="text-xs px-3 py-1.5 rounded-full border transition-colors
+            {% if filter_tier == val %}bg-violet-600 border-violet-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+
+  <span class="text-xs text-slate-500 self-center ml-3">Source:</span>
+  {% for val in ['','LinkedIn','Instagram','Google','Facebook','Telegram','Manual'] %}
+  <a href="/sources?source_type={{ val }}{% if filter_status %}&status={{ filter_status }}{% end %}{% if filter_tier %}&tier={{ filter_tier }}{% end %}"
+     class="text-xs px-3 py-1.5 rounded-full border transition-colors
+            {% if filter_source == val %}bg-teal-600 border-teal-500 text-white{% else %}bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white{% end %}">
+    {{ val if val else 'All' }}
+  </a>
+  {% end %}
+
+  {% if filter_status or filter_tier or filter_source %}
+  <a href="/sources" class="text-xs px-3 py-1.5 rounded-full bg-slate-700 text-slate-400 hover:text-white border border-slate-600 ml-auto">× Clear</a>
+  {% end %}
+</div>
+
+<!-- List -->
+{% if entries %}
+<div class="space-y-3">
+  {% for e in entries %}
+  {% set tier_cls = {'A':'bg-emerald-900/60 text-emerald-300 border-emerald-800/40', 'B':'bg-blue-900/60 text-blue-300 border-blue-800/40', 'Nurture':'bg-amber-900/50 text-amber-300 border-amber-800/40', 'Reject':'bg-red-950/60 text-red-400 border-red-900/40', 'Unscored':'bg-slate-700 text-slate-400 border-slate-600'} %}
+  {% set tier_color = tier_cls.get(e.get('tier') or 'Unscored', 'bg-slate-700 text-slate-400 border-slate-600') %}
+  {% set status_dot = {'queued':'bg-amber-400','approved':'bg-green-500','converted':'bg-teal-400','rejected':'bg-red-500'} %}
+  {% set dot_color = status_dot.get(e.get('status') or 'queued', 'bg-slate-500') %}
+
+  <div class="bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl transition-colors">
+    <a href="/sources/{{ e['id'] }}" class="block px-5 py-4">
+      <div class="flex items-start gap-4">
+
+        <!-- Score ring -->
+        <div class="flex-shrink-0 text-center w-14">
+          <p class="text-2xl font-bold {% if e['score'] >= 75 %}text-emerald-400{% elif e['score'] >= 55 %}text-blue-400{% elif e['score'] >= 35 %}text-amber-400{% else %}text-red-400{% end %}">{{ e['score'] }}</p>
+          <span class="inline-block border text-xs px-2 py-0.5 rounded-full {{ tier_color }}">{{ e.get('tier') or '?' }}</span>
+        </div>
+
+        <!-- Main info -->
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-2 mb-1">
+            <span class="text-sm font-semibold text-white">{{ e['name'] }}</span>
+            <span class="badge bg-slate-700 text-slate-400 text-xs">{{ e.get('source_type') or 'Manual' }}</span>
+            <span class="flex items-center gap-1 text-xs text-slate-500">
+              <span class="w-1.5 h-1.5 rounded-full {{ dot_color }} inline-block"></span>
+              {{ e.get('status') or 'queued' }}
+            </span>
+            {% if e.get('candidate_id') %}
+            <span class="badge bg-teal-900/60 text-teal-300 text-xs">→ Candidate #{{ e['candidate_id'] }}</span>
+            {% end %}
+          </div>
+          {% if e.get('profile_url') %}
+          <p class="text-xs text-indigo-400 truncate mb-1">{{ e['profile_url'][:80] }}</p>
+          {% end %}
+          {% if e.get('recommended_action') %}
+          <p class="text-xs text-slate-400">→ {{ e['recommended_action'] }}</p>
+          {% end %}
+          {% if e.get('reasons') %}
+          <p class="text-xs text-slate-600 mt-1">{{ ', '.join(e['reasons'][:3]) }}</p>
+          {% end %}
+        </div>
+
+        <!-- Date -->
+        <div class="text-right flex-shrink-0 hidden sm:block">
+          <p class="text-xs text-slate-600">{{ (e.get('created_at') or '')[:10] }}</p>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% end %}
+</div>
+
+{% else %}
+<!-- Empty state -->
+<div class="bg-slate-800 border border-slate-700 rounded-xl px-8 py-14 text-center">
+  {% if filter_status or filter_tier or filter_source %}
+  <p class="text-2xl mb-3">🔍</p>
+  <p class="text-white font-semibold text-sm mb-1">No sources match this filter</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Try a different tier, status, or source type filter.</p>
+  <a href="/sources" class="inline-block bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Clear filters</a>
+  {% else %}
+  <p class="text-2xl mb-3">📥</p>
+  <p class="text-white font-semibold text-sm mb-1">Source queue is empty</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Paste a LinkedIn bio, Instagram profile, or any raw text from a potential candidate. The system scores it automatically — no AI credits needed.</p>
+  <div class="flex justify-center gap-3">
+    <a href="/sources/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">+ Add First Source</a>
+    <a href="/candidates" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">View Candidates →</a>
+  </div>
+  {% end %}
+</div>
+{% end %}
+
+{% end %}
