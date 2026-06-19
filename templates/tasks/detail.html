@@ -92,6 +92,77 @@
   <!-- Right: actions -->
   <div class="space-y-4">
 
+    <!-- Next Best Action -->
+    <div class="bg-slate-800 border {% if task['status'] in ('Pending','Copied') %}border-indigo-900/50{% elif task['status'] == 'Sent' %}border-yellow-900/40{% elif task['status'] == 'Completed' %}border-green-900/40{% elif task['status'] == 'Rejected' %}border-slate-700{% else %}border-slate-700{% end %} rounded-xl p-5">
+      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Next Best Action</p>
+      {% if task['status'] == 'Pending' %}
+        {% if task.get('message') %}
+        <p class="text-sm text-white mb-1">Copy & send this message</p>
+        <p class="text-xs text-slate-400 mb-3">Copy the prepared message, send it manually via LinkedIn or WhatsApp, then mark it sent.</p>
+        <form method="POST" action="/tasks/{{ task['id'] }}/copy" class="mb-2">
+          <button type="submit" class="w-full bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            📋 Copy Message
+          </button>
+        </form>
+        <form method="POST" action="/tasks/{{ task['id'] }}/complete">
+          <button type="submit" class="w-full bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+            ✓ Mark Complete
+          </button>
+        </form>
+        {% else %}
+        <p class="text-sm text-white mb-1">Complete this task</p>
+        <p class="text-xs text-slate-400 mb-3">{{ task.get('description') or 'No further details.' }}</p>
+        <form method="POST" action="/tasks/{{ task['id'] }}/complete" class="mb-2">
+          <button type="submit" class="w-full bg-green-900/60 hover:bg-green-900 text-green-300 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            ✓ Mark Complete
+          </button>
+        </form>
+        <a href="/tasks/{{ task['id'] }}/edit" class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+          Edit Task
+        </a>
+        {% end %}
+      {% elif task['status'] == 'Copied' %}
+      <p class="text-sm text-white mb-1">Message copied — now send it</p>
+      <p class="text-xs text-slate-400 mb-3">Send the message via LinkedIn or WhatsApp, then mark it sent here.</p>
+      <form method="POST" action="/tasks/{{ task['id'] }}/mark-sent" class="mb-2">
+        <button type="submit" class="w-full bg-yellow-900/60 hover:bg-yellow-900 text-yellow-300 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          ✉ Mark Sent
+        </button>
+      </form>
+      <form method="POST" action="/tasks/{{ task['id'] }}/complete">
+        <button type="submit" class="w-full bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+          ✓ Mark Complete
+        </button>
+      </form>
+      {% elif task['status'] == 'Sent' %}
+      <p class="text-sm text-yellow-300 mb-1">Waiting for response</p>
+      <p class="text-xs text-slate-400 mb-3">Message has been sent. Mark complete once you hear back or the action is done.</p>
+      <form method="POST" action="/tasks/{{ task['id'] }}/complete" class="mb-2">
+        <button type="submit" class="w-full bg-green-900/60 hover:bg-green-900 text-green-300 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          ✓ Mark Complete
+        </button>
+      </form>
+      <form method="POST" action="/tasks/{{ task['id'] }}/reject">
+        <button type="submit" class="w-full bg-red-950/50 hover:bg-red-950 text-red-400 text-sm px-4 py-2 rounded-lg transition-colors">
+          ✗ No Response / Reject
+        </button>
+      </form>
+      {% elif task['status'] == 'Completed' %}
+      <p class="text-sm text-green-400 mb-1">✓ Task completed</p>
+      <p class="text-xs text-slate-400 mb-3">Well done. Check the action queue for what's next.</p>
+      <a href="/tasks" class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+        ← Back to Queue
+      </a>
+      {% elif task['status'] == 'Rejected' %}
+      <p class="text-sm text-slate-400 mb-1">Task rejected</p>
+      <a href="/tasks" class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+        ← Back to Queue
+      </a>
+      {% else %}
+      <p class="text-xs text-slate-500">Update the task status using the Actions panel below.</p>
+      {% end %}
+    </div>
+
     <!-- Primary actions -->
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
       <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-700 pb-2">Actions</p>

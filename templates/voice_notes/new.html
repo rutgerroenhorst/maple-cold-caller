@@ -1,0 +1,90 @@
+{% extends "../base.html" %}
+{% block title %}Screen Voice Note — Maple Growth OS{% end %}
+
+{% block header %}
+<div class="flex items-center gap-2">
+  <a href="/voice-notes" class="text-slate-400 hover:text-white text-sm">Voice Screener</a>
+  <span class="text-slate-600">/</span>
+  <h1 class="text-lg font-semibold text-white">Screen Voice Note</h1>
+</div>
+{% end %}
+
+{% block content %}
+
+{% if error %}
+<div class="mb-4 bg-red-950/50 border border-red-900/50 rounded-xl px-4 py-3 text-sm text-red-300">⚠ {{ error }}</div>
+{% end %}
+
+<div class="max-w-2xl">
+
+  <!-- Info card -->
+  <div class="mb-5 bg-indigo-950/30 border border-indigo-900/30 rounded-xl px-4 py-3 text-xs text-indigo-300">
+    <p class="font-semibold mb-1">How voice note screening works</p>
+    <ol class="space-y-0.5 text-indigo-200/80">
+      <li>1. Paste the voice note URL (direct audio link) or skip and paste the transcript manually later.</li>
+      <li>2. The system downloads the audio and transcribes it via Whisper (OpenAI).</li>
+      <li>3. Claude scores 8 dimensions and gives an A/B/Nurture/Reject verdict.</li>
+      <li>4. You review and approve or reject. An action task is created automatically.</li>
+    </ol>
+    <p class="mt-2 text-amber-300/80">⚠ WhatsApp and Telegram voice notes are not directly downloadable — save to your device first and upload to a public link (e.g. Google Drive "anyone with link"), or paste the transcript manually.</p>
+  </div>
+
+  <form method="POST" action="/voice-notes/new" class="space-y-5">
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-700 pb-2">Candidate</p>
+
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Candidate Name <span class="text-red-400">*</span></label>
+        <input type="text" name="candidate_name" required placeholder="e.g. Jan de Vries"
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Link to CRM Candidate (optional)</label>
+          <select name="candidate_id"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for c in candidates %}
+            <option value="{{ c['id'] }}">{{ c['full_name'] }}</option>
+            {% end %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Link to Research Queue Item (optional)</label>
+          <select name="research_queue_id"
+                  class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="">— none —</option>
+            {% for qi in queue_items %}
+            <option value="{{ qi['id'] }}">{{ qi['name'] }}</option>
+            {% end %}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-700 pb-2">Voice Note</p>
+
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Voice Note URL</label>
+        <input type="url" name="voice_note_url"
+               placeholder="https://drive.google.com/… or direct .ogg/.mp3 URL"
+               class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+        <p class="text-xs text-slate-600 mt-1">Must be a publicly accessible direct audio file URL. If unavailable, leave blank and paste transcript on the detail page.</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <button type="submit"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm px-6 py-2.5 rounded-lg transition-colors">
+        Create Screen &amp; Start Processing
+      </button>
+      <a href="/voice-notes" class="text-sm text-slate-400 hover:text-white transition-colors">Cancel</a>
+    </div>
+
+  </form>
+</div>
+
+{% end %}

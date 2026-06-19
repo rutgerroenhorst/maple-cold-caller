@@ -1,0 +1,145 @@
+{% extends "../base.html" %}
+{% block title %}Voice Screener — Maple Growth OS{% end %}
+
+{% block header %}
+<h1 class="text-lg font-semibold text-white">Voice Note Screener</h1>
+{% end %}
+
+{% block header_actions %}
+<a href="/voice-notes/new"
+   class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + Screen Voice Note
+</a>
+{% end %}
+
+{% block content %}
+
+<!-- Stats -->
+<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
+  {% set stat_items = [
+    ('Total',        str(summary['total']),       'text-slate-300',   ''),
+    ('Pending',      str(summary['pending']),     'text-amber-300',   'Pending'),
+    ('Transcribed',  str(summary['transcribed']), 'text-blue-300',    'Transcribed'),
+    ('Scored',       str(summary['scored']),      'text-indigo-300',  'Scored'),
+    ('Approved',     str(summary['approved']),    'text-green-300',   'Approved'),
+    ('Rejected',     str(summary['rejected']),    'text-red-400',     'Rejected'),
+    ('A-Candidates', str(summary['a_candidates']),'text-emerald-300', ''),
+    ('B-Candidates', str(summary['b_candidates']),'text-teal-300',    ''),
+  ] %}
+  {% for label, val, cls, fstatus in stat_items %}
+  <a href="{% if fstatus %}/voice-notes?status={{ fstatus }}{% else %}/voice-notes{% end %}"
+     class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-slate-500 transition-colors">
+    <p class="text-xs text-slate-500 mb-1 truncate">{{ label }}</p>
+    <p class="text-2xl font-bold {{ cls }}">{{ val }}</p>
+  </a>
+  {% end %}
+</div>
+
+<!-- Filters -->
+<div class="flex flex-wrap gap-2 mb-4">
+  {% set statuses = ['', 'Pending', 'Transcribed', 'Scored', 'Approved', 'Rejected'] %}
+  {% set status_labels = ['All', 'Pending', 'Transcribed', 'Scored', 'Approved', 'Rejected'] %}
+  {% for s, label in zip(statuses, status_labels) %}
+  <a href="/voice-notes{% if s %}?status={{ s }}{% end %}"
+     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+            {% if filter_status == s %}bg-indigo-600 text-white{% else %}bg-slate-800 text-slate-400 hover:text-white border border-slate-700{% end %}">
+    {{ label }}
+  </a>
+  {% end %}
+  {% set decisions = ['A-Candidate', 'B-Candidate', 'Nurture', 'Reject'] %}
+  {% for d in decisions %}
+  <a href="/voice-notes?decision={{ d }}"
+     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+            {% if filter_decision == d %}bg-indigo-600 text-white{% else %}bg-slate-800 text-slate-400 hover:text-white border border-slate-700{% end %}">
+    {{ d }}
+  </a>
+  {% end %}
+</div>
+
+<!-- List -->
+<div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+  {% if screens %}
+  <div class="divide-y divide-slate-700">
+    {% for s in screens %}
+    {% set dec = s.get('voice_decision') or 'Pending' %}
+    {% set score = s.get('total_voice_score') or 0 %}
+    <div class="px-5 py-4 flex items-start gap-4">
+
+      <!-- Score bubble -->
+      <div class="flex-shrink-0 w-14 h-14 rounded-xl flex flex-col items-center justify-center text-center
+                  {% if dec == 'A-Candidate' %}bg-green-900 text-green-300
+                  {% elif dec == 'B-Candidate' %}bg-indigo-900 text-indigo-300
+                  {% elif dec == 'Nurture' %}bg-amber-900 text-amber-300
+                  {% elif dec == 'Reject' %}bg-red-950 text-red-400
+                  {% else %}bg-slate-700 text-slate-400{% end %}">
+        <span class="text-lg font-bold leading-none">{{ score }}</span>
+        <span class="text-xs leading-none mt-0.5">/100</span>
+      </div>
+
+      <div class="flex-1 min-w-0">
+        <div class="flex flex-wrap items-center gap-2 mb-1">
+          <span class="text-sm font-semibold text-white">{{ s['candidate_name'] }}</span>
+          <span class="badge
+            {% if dec == 'A-Candidate' %}bg-green-900 text-green-300
+            {% elif dec == 'B-Candidate' %}bg-indigo-900 text-indigo-300
+            {% elif dec == 'Nurture' %}bg-amber-900 text-amber-300
+            {% elif dec == 'Reject' %}bg-red-950 text-red-400
+            {% else %}bg-slate-700 text-slate-400{% end %}">
+            {{ dec }}
+          </span>
+          <span class="badge
+            {% if s['status'] == 'Approved' %}bg-green-900 text-green-300
+            {% elif s['status'] == 'Rejected' %}bg-red-950 text-red-400
+            {% elif s['status'] == 'Scored' %}bg-teal-900 text-teal-300
+            {% elif s['status'] == 'Transcribed' %}bg-blue-900 text-blue-300
+            {% else %}bg-slate-700 text-slate-400{% end %}">
+            {{ s['status'] }}
+          </span>
+          {% if s.get('transcript_source') and s['transcript_source'] not in ('Pending', '') %}
+          <span class="badge bg-slate-700 text-slate-400 text-xs">{{ s['transcript_source'] }}</span>
+          {% end %}
+        </div>
+        {% if s.get('ai_verdict') %}
+        <p class="text-xs text-slate-400 truncate">{{ s['ai_verdict'][:120] }}</p>
+        {% elif s.get('voice_note_url') %}
+        <p class="text-xs text-slate-500 truncate">{{ s['voice_note_url'][:80] }}</p>
+        {% end %}
+        <p class="text-xs text-slate-600 mt-1">{{ (s['created_at'] or '')[:16] }}</p>
+      </div>
+
+      <!-- Score bars (mini) -->
+      <div class="hidden md:flex flex-col gap-0.5 w-32 flex-shrink-0">
+        {% for label, field in [('Clarity','score_clarity'),('Energy','score_energy'),('Dutch','score_dutch_level'),('Sales','score_sales_instinct')] %}
+        {% set v = s.get(field) or 0 %}
+        <div class="flex items-center gap-1.5">
+          <span class="text-xs text-slate-600 w-10 truncate">{{ label }}</span>
+          <div class="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div class="h-full rounded-full {% if v >= 8 %}bg-green-500{% elif v >= 6 %}bg-indigo-500{% elif v >= 4 %}bg-amber-500{% elif v > 0 %}bg-red-600{% else %}bg-slate-600{% end %}"
+                 style="width:{{ v * 10 }}%"></div>
+          </div>
+          <span class="text-xs text-slate-500 w-3">{{ v if v else '' }}</span>
+        </div>
+        {% end %}
+      </div>
+
+      <a href="/voice-notes/{{ s['id'] }}"
+         class="flex-shrink-0 text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors">
+        Review →
+      </a>
+    </div>
+    {% end %}
+  </div>
+  {% else %}
+  <div class="px-8 py-14 text-center">
+    <p class="text-2xl mb-3">🎙</p>
+    <p class="text-white font-semibold text-sm mb-1">No voice notes screened yet</p>
+    <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Paste a candidate's voice note URL (or manually enter the transcript). Claude scores 8 dimensions and gives an A/B/Nurture/Reject verdict.</p>
+    <div class="flex justify-center gap-3">
+      <a href="/voice-notes/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">+ Screen First Voice Note</a>
+      <a href="/candidates" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">View Candidates →</a>
+    </div>
+  </div>
+  {% end %}
+</div>
+
+{% end %}

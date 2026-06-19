@@ -92,8 +92,16 @@ class LogoutHandler(tornado.web.RequestHandler):
 
 class DashboardHandler(Base):
     def get(self):
-        stats = db.get_dashboard_stats()
-        self.render("dashboard.html", stats=stats, page='dashboard')
+        try:
+            data = db.get_dashboard_data()
+        except Exception:
+            data = {}
+        # Keep legacy stats for any old templates that might check them
+        try:
+            stats = db.get_dashboard_stats()
+        except Exception:
+            stats = {}
+        self.render("dashboard.html", data=data, stats=stats, page='dashboard')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1196,6 +1204,155 @@ class ResearchQueueDetailHandler(Base):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Voice Note Screener
+# ──────────────────────────────────────────────────────────────────────────────
+
+class VoiceNoteListHandler(Base):
+    def get(self):
+        status   = self.get_argument('status', '')
+        decision = self.get_argument('decision', '')
+        screens  = db.get_voice_note_screens(status=status, decision=decision)
+        summary  = db.get_voice_note_summary()
+        self.render('voice_notes/list.html', page='voice_notes',
+                    screens=screens, summary=summary,
+                    filter_status=status, filter_decision=decision)
+
+
+class VoiceNoteNewHandler(Base):
+    def get(self):
+        candidates = db.get_candidates()
+        queue_items = db.get_research_queue()
+        self.render('voice_notes/new.html', page='voice_notes',
+                    candidates=candidates, queue_items=queue_items,
+                    error=None)
+
+    def post(self):
+        url           = self.get_argument('voice_note_url', '').strip()
+        name          = self.get_argument('candidate_name', '').strip()
+        candidate_id  = self.get_argument('candidate_id', '') or None
+        queue_id      = self.get_argument('research_queue_id', '') or None
+
+        if not name:
+            candidates  = db.get_candidates()
+            queue_items = db.get_research_queue()
+            return self.render('voice_notes/new.html', page='voice_notes',
+                               candidates=candidates, queue_items=queue_items,
+                               error='Candidate name is required')
+
+        data = {
+            'candidate_name':    name,
+            'voice_note_url':    url or None,
+            'audio_fetch_status': 'Not Fetched',
+            'transcript_source': 'Pending',
+            'status':            'Pending',
+        }
+        if candidate_id:
+            try: data['candidate_id'] = int(candidate_id)
+            except ValueError: pass
+        if queue_id:
+            try: data['research_queue_id'] = int(queue_id)
+            except ValueError: pass
+
+        vn_id = db.create_voice_note_screen(data)
+
+        # Auto-create "Review Voice Note" task
+        try:
+            db.create_action_task({
+                'task_type':    'Review Voice Note',
+                'title':        f'Review Voice Note — {name}',
+                'description':  f'Voice note submitted for screening. URL: {url or "(none)"}',
+                'priority':     'Medium',
+                'status':       'Open',
+                'owner':        'Rutger',
+                'related_type': 'voice_note_screen',
+                'related_id':   vn_id,
+            })
+        except Exception:
+            pass
+
+        # If URL provided, attempt immediate fetch + transcribe + score
+        if url:
+            result = db.transcribe_voice_note(vn_id)
+            if result.get('ok'):
+                db.score_voice_note_with_ai(vn_id)
+
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteDetailHandler(Base):
+
+    def get(self, vn_id):
+        screen = db.get_voice_note_screen(int(vn_id))
+        if not screen:
+            return self.send_error(404)
+        self.render('voice_notes/detail.html', page='voice_notes', screen=screen)
+
+
+    def post(self, vn_id):
+        """Save notes update."""
+        notes = self.get_argument('notes', '')
+        db._update_vn({'notes': notes}, int(vn_id))
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteTranscribeHandler(Base):
+
+    def post(self, vn_id):
+        result = db.transcribe_voice_note(int(vn_id))
+        if result.get('ok'):
+            db.score_voice_note_with_ai(int(vn_id))
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteScoreHandler(Base):
+
+    def post(self, vn_id):
+        db.score_voice_note_with_ai(int(vn_id))
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteManualTranscriptHandler(Base):
+
+    def post(self, vn_id):
+        transcript = self.get_argument('transcript', '')
+        db.save_manual_transcript(int(vn_id), transcript)
+        # Auto-score after manual transcript saved
+        db.score_voice_note_with_ai(int(vn_id))
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteManualScoreHandler(Base):
+
+    def post(self, vn_id):
+        data = {f: self.get_argument(f, 0) for f in [
+            'score_clarity', 'score_energy', 'score_dutch_level', 'score_structure',
+            'score_confidence', 'score_objection_handling', 'score_sales_instinct',
+            'score_coachability',
+        ]}
+        data['ai_verdict']       = self.get_argument('ai_verdict', '')
+        data['ai_strengths']     = self.get_argument('ai_strengths', '')
+        data['ai_risks']         = self.get_argument('ai_risks', '')
+        data['ai_recommendation']= self.get_argument('ai_recommendation', '')
+        db.save_manual_scores(int(vn_id), data)
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteApproveHandler(Base):
+
+    def post(self, vn_id):
+        db.approve_voice_note(int(vn_id))
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+class VoiceNoteRejectHandler(Base):
+
+    def post(self, vn_id):
+        reason = self.get_argument('reason', '')
+        db.reject_voice_note(int(vn_id), reason)
+        self.redirect(f'/voice-notes/{vn_id}')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # App factory
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1206,6 +1363,7 @@ def make_app():
     db.init_research_tables()
     db.init_action_tasks_table()
     db.migrate_phase3()   # must come after init_research_tables
+    db.init_voice_note_tables()
     # Derive cookie secret from password (or use env override); never empty
     _raw_secret = os.environ.get("MAPLE_COOKIE_SECRET") or _APP_PASSWORD or "maple-dev-secret-change-me"
     cookie_secret = hashlib.sha256(_raw_secret.encode()).hexdigest()
@@ -1298,6 +1456,16 @@ def make_app():
         (r"/research/queue/([0-9]+)/manual-review",             ResearchQueueManualReviewHandler),
         (r"/research/queue/([0-9]+)/refresh-public-data",       ResearchQueueRefreshHandler),
         (r"/research/queries",                                  ResearchQueriesHandler),
+        # Voice Note Screener
+        (r"/voice-notes",                                       VoiceNoteListHandler),
+        (r"/voice-notes/new",                                   VoiceNoteNewHandler),
+        (r"/voice-notes/([0-9]+)",                              VoiceNoteDetailHandler),
+        (r"/voice-notes/([0-9]+)/transcribe",                   VoiceNoteTranscribeHandler),
+        (r"/voice-notes/([0-9]+)/score",                        VoiceNoteScoreHandler),
+        (r"/voice-notes/([0-9]+)/manual-transcript",            VoiceNoteManualTranscriptHandler),
+        (r"/voice-notes/([0-9]+)/manual-score",                 VoiceNoteManualScoreHandler),
+        (r"/voice-notes/([0-9]+)/approve",                      VoiceNoteApproveHandler),
+        (r"/voice-notes/([0-9]+)/reject",                       VoiceNoteRejectHandler),
     ], **settings)
 
 

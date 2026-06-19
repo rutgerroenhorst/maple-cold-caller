@@ -160,16 +160,27 @@
   {% end %}
 </div>
 {% else %}
-<div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
-  <p class="text-slate-400 text-sm mb-3">
+<div class="bg-slate-800 border border-slate-700 rounded-xl px-8 py-14 text-center">
+  {% if status_filter or enrich_filter or confidence_filter %}
+  <p class="text-2xl mb-3">🔍</p>
+  <p class="text-white font-semibold text-sm mb-1">No matches for this filter</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">
     {% if status_filter %}No candidates with status "{{ status_filter }}".
     {% elif enrich_filter %}No candidates with enrichment status "{{ enrich_filter }}".
     {% elif confidence_filter %}No {{ confidence_filter }} confidence candidates.
-    {% else %}Review queue is empty.{% end %}
+    {% end %}
+    Try a different filter or clear all.
   </p>
-  <a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">
-    + Add Source
-  </a>
+  <a href="/research/queue" class="inline-block bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Clear filters</a>
+  {% else %}
+  <p class="text-2xl mb-3">🔬</p>
+  <p class="text-white font-semibold text-sm mb-1">Review queue is empty</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No candidates to review yet. Add sources, run the Research Worker, or paste a LinkedIn URL directly to populate this queue.</p>
+  <div class="flex justify-center gap-3">
+    <a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Paste Profile URL</a>
+    <a href="/research/sources" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Add Sources →</a>
+  </div>
+  {% end %}
 </div>
 {% end %}
 

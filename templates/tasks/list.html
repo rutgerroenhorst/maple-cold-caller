@@ -144,12 +144,21 @@
   {% end %}
 </div>
 {% else %}
-<div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
-  <p class="text-slate-400 text-sm">
-    {% if status_filter %}No tasks with status "{{ status_filter }}".
-    {% else %}Action queue is empty.{% end %}
-  </p>
-  <p class="text-slate-600 text-xs mt-2">Tasks are created automatically when you approve or move research candidates.</p>
+<div class="bg-slate-800 border border-slate-700 rounded-xl px-8 py-14 text-center">
+  {% if status_filter %}
+  <p class="text-2xl mb-3">✅</p>
+  <p class="text-white font-semibold text-sm mb-1">No "{{ status_filter }}" tasks</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">No tasks with this status right now. Try a different filter or view all open tasks.</p>
+  <a href="/tasks" class="inline-block bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">View all tasks</a>
+  {% else %}
+  <p class="text-2xl mb-3">🎯</p>
+  <p class="text-white font-semibold text-sm mb-1">Action queue is clear</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Tasks are created automatically when candidates move through the pipeline — approve a research candidate or reject a voice note to see tasks appear here.</p>
+  <div class="flex justify-center gap-3">
+    <a href="/research/queue" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Review Queue →</a>
+    <a href="/tasks/new" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">+ Create Task</a>
+  </div>
+  {% end %}
 </div>
 {% end %}
 

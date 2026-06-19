@@ -142,15 +142,24 @@
 </form>
 
 {% else %}
-<div class="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
-  <p class="text-slate-400 mb-4">{{ 'No candidates match your filters.' if (search or status) else 'No candidates yet.' }}</p>
+<div class="bg-slate-800 border border-slate-700 rounded-xl px-8 py-14 text-center">
+  {% if search or status %}
+  <p class="text-2xl mb-3">🔍</p>
+  <p class="text-white font-semibold text-sm mb-1">No candidates match your filters</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Try broadening your search or clearing the status filter to see all candidates.</p>
   <div class="flex justify-center gap-3">
-    {% if search or status %}
     <a href="/candidates" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Clear filters</a>
-    {% end %}
-    <a href="/candidates/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Add candidate</a>
-    <a href="/import/candidates" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Import CSV</a>
   </div>
+  {% else %}
+  <p class="text-2xl mb-3">👤</p>
+  <p class="text-white font-semibold text-sm mb-1">Candidate pipeline is empty</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Add candidates manually, import from CSV, or let the Research Worker find them automatically via LinkedIn and job boards.</p>
+  <div class="flex justify-center gap-3">
+    <a href="/candidates/new" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">+ Add Candidate</a>
+    <a href="/import" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Import CSV</a>
+    <a href="/research" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Research Hub →</a>
+  </div>
+  {% end %}
 </div>
 {% end %}
 

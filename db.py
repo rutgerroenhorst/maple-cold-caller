@@ -3361,3 +3361,710 @@ def get_research_summary_ext() -> dict:
     conn.close()
     return d
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VOICE NOTE SCREENER
+# ══════════════════════════════════════════════════════════════════════════════
+
+import json as _json
+import tempfile as _tempfile
+import urllib.request as _urllib_req
+
+_OPENAI_API_KEY  = os.environ.get('OPENAI_API_KEY', '')
+_ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+
+_AUDIO_CONTENT_TYPES = {
+    'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/webm',
+    'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/flac',
+    'audio/m4a', 'audio/x-m4a', 'video/ogg',
+}
+_AUDIO_EXTENSIONS = ('.ogg', '.mp3', '.mp4', '.m4a', '.wav', '.webm', '.aac', '.flac', '.opus')
+
+_VN_SCORE_WEIGHTS = {
+    'score_clarity':            1.0,
+    'score_energy':             1.5,
+    'score_dutch_level':        2.0,
+    'score_structure':          1.0,
+    'score_confidence':         1.5,
+    'score_objection_handling': 1.5,
+    'score_sales_instinct':     2.0,
+    'score_coachability':       1.0,
+}
+_VN_TOTAL_WEIGHT = sum(_VN_SCORE_WEIGHTS.values())
+
+_VN_FIELDS = [
+    'candidate_id', 'research_queue_id', 'candidate_name',
+    'voice_note_url', 'audio_fetch_status', 'audio_fetch_error',
+    'transcript', 'transcript_source', 'transcript_error',
+    'score_clarity', 'score_energy', 'score_dutch_level', 'score_structure',
+    'score_confidence', 'score_objection_handling', 'score_sales_instinct',
+    'score_coachability', 'total_voice_score', 'voice_decision',
+    'ai_verdict', 'ai_strengths', 'ai_risks', 'ai_recommendation',
+    'status', 'notes', 'reviewed_by', 'scored_at', 'reviewed_at',
+]
+
+
+def init_voice_note_tables():
+    """Create voice_note_screens table. Safe to call multiple times."""
+    conn = get_db()
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS voice_note_screens (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id            INTEGER REFERENCES cold_caller_candidates(id) ON DELETE SET NULL,
+        research_queue_id       INTEGER,
+        candidate_name          TEXT NOT NULL,
+        voice_note_url          TEXT,
+        audio_fetch_status      TEXT DEFAULT 'Not Fetched',
+        audio_fetch_error       TEXT,
+        transcript              TEXT,
+        transcript_source       TEXT DEFAULT 'Pending',
+        transcript_error        TEXT,
+        score_clarity           INTEGER DEFAULT 0,
+        score_energy            INTEGER DEFAULT 0,
+        score_dutch_level       INTEGER DEFAULT 0,
+        score_structure         INTEGER DEFAULT 0,
+        score_confidence        INTEGER DEFAULT 0,
+        score_objection_handling INTEGER DEFAULT 0,
+        score_sales_instinct    INTEGER DEFAULT 0,
+        score_coachability      INTEGER DEFAULT 0,
+        total_voice_score       INTEGER DEFAULT 0,
+        voice_decision          TEXT DEFAULT 'Pending',
+        ai_verdict              TEXT,
+        ai_strengths            TEXT,
+        ai_risks                TEXT,
+        ai_recommendation       TEXT,
+        status                  TEXT DEFAULT 'Pending',
+        notes                   TEXT,
+        reviewed_by             TEXT,
+        created_at              TEXT DEFAULT (datetime('now')),
+        scored_at               TEXT,
+        reviewed_at             TEXT
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _compute_voice_score(row: dict) -> tuple:
+    """Return (total_score 0-100, voice_decision str)."""
+    raw = 0.0
+    for field, weight in _VN_SCORE_WEIGHTS.items():
+        raw += int(row.get(field) or 0) * weight
+    normalized = int(round((raw / (10.0 * _VN_TOTAL_WEIGHT)) * 100))
+    normalized = max(0, min(100, normalized))
+    if normalized >= 80:
+        decision = 'A-Candidate'
+    elif normalized >= 65:
+        decision = 'B-Candidate'
+    elif normalized >= 50:
+        decision = 'Nurture'
+    else:
+        decision = 'Reject'
+    return normalized, decision
+
+
+def _fetch_audio_bytes(url: str) -> dict:
+    """
+    Attempt to download audio from a URL.
+    Returns {ok, bytes, content_type, error, extension}.
+    Only accepts audio/* content types or audio file extensions.
+    """
+    result = {'ok': False, 'bytes': None, 'content_type': '', 'error': '', 'extension': '.ogg'}
+    try:
+        req = _urllib_req.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; MapleOS/1.0)',
+        })
+        with _urllib_req.urlopen(req, timeout=30) as resp:
+            ct = resp.headers.get('Content-Type', '').split(';')[0].strip().lower()
+            # Check content type or file extension
+            ext_ok = any(url.lower().endswith(e) for e in _AUDIO_EXTENSIONS)
+            ct_ok  = any(ct.startswith(a) for a in _AUDIO_CONTENT_TYPES)
+            if not (ct_ok or ext_ok):
+                result['error'] = f'Not an audio file (Content-Type: {ct or "unknown"}). Paste the transcript manually.'
+                return result
+            data = resp.read(20 * 1024 * 1024)  # 20 MB limit
+            if not data:
+                result['error'] = 'Empty audio response'
+                return result
+            # Determine extension
+            for ext in _AUDIO_EXTENSIONS:
+                if url.lower().endswith(ext) or ct.endswith(ext.lstrip('.')):
+                    result['extension'] = ext
+                    break
+            if ct == 'audio/ogg' or 'ogg' in ct:
+                result['extension'] = '.ogg'
+            elif ct == 'audio/mpeg' or 'mp3' in ct:
+                result['extension'] = '.mp3'
+            elif ct in ('audio/mp4', 'audio/x-m4a', 'audio/m4a'):
+                result['extension'] = '.m4a'
+            elif ct == 'audio/webm':
+                result['extension'] = '.webm'
+            result.update({'ok': True, 'bytes': data, 'content_type': ct})
+    except Exception as e:
+        result['error'] = f'Could not download audio: {e}'
+    return result
+
+
+def transcribe_voice_note(vn_id: int) -> dict:
+    """
+    Download audio from URL and transcribe via OpenAI Whisper.
+    Returns {ok, transcript, source, error}.
+    Updates the voice_note_screens row.
+    """
+    if not _OPENAI_API_KEY:
+        _update_vn({'audio_fetch_status': 'No API Key',
+                    'transcript_source': 'Manual',
+                    'transcript_error': 'OpenAI API key not configured. Paste transcript manually.'}, vn_id)
+        return {'ok': False, 'error': 'OpenAI API key not configured', 'needs_manual': True}
+
+    conn = get_db()
+    row = to_dict(conn.execute("SELECT * FROM voice_note_screens WHERE id=?", (vn_id,)).fetchone())
+    conn.close()
+    if not row:
+        return {'ok': False, 'error': 'Screen not found'}
+
+    url = (row.get('voice_note_url') or '').strip()
+    if not url:
+        return {'ok': False, 'error': 'No URL provided', 'needs_manual': True}
+
+    _update_vn({'audio_fetch_status': 'Fetching'}, vn_id)
+
+    audio = _fetch_audio_bytes(url)
+    if not audio['ok']:
+        _update_vn({'audio_fetch_status': 'Failed',
+                    'audio_fetch_error': audio['error'],
+                    'transcript_source': 'Manual',
+                    'transcript_error': audio['error']}, vn_id)
+        return {'ok': False, 'error': audio['error'], 'needs_manual': True}
+
+    _update_vn({'audio_fetch_status': 'Fetched'}, vn_id)
+
+    # Write to temp file and call Whisper
+    try:
+        import openai as _openai
+    except ImportError:
+        _update_vn({'transcript_source': 'Manual',
+                    'transcript_error': 'openai package not installed'}, vn_id)
+        return {'ok': False, 'error': 'openai package not installed. Run: pip install openai', 'needs_manual': True}
+
+    try:
+        client = _openai.OpenAI(api_key=_OPENAI_API_KEY)
+        with _tempfile.NamedTemporaryFile(suffix=audio['extension'], delete=False) as f:
+            f.write(audio['bytes'])
+            tmp_path = f.name
+        with open(tmp_path, 'rb') as f:
+            resp = client.audio.transcriptions.create(
+                model='whisper-1',
+                file=f,
+                language='nl',
+            )
+        transcript = resp.text
+        _update_vn({'transcript': transcript, 'transcript_source': 'Whisper',
+                    'transcript_error': None, 'status': 'Transcribed'}, vn_id)
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        return {'ok': True, 'transcript': transcript, 'source': 'Whisper'}
+    except Exception as e:
+        err = str(e)
+        _update_vn({'audio_fetch_status': 'Fetched',
+                    'transcript_source': 'Failed',
+                    'transcript_error': err}, vn_id)
+        return {'ok': False, 'error': err, 'needs_manual': True}
+
+
+def score_voice_note_with_ai(vn_id: int) -> dict:
+    """
+    Score an existing transcript using Claude.
+    Returns {ok, scores, error}.
+    Updates the voice_note_screens row with all scores + AI verdict.
+    """
+    if not _ANTHROPIC_API_KEY:
+        return {'ok': False, 'error': 'Anthropic API key not configured. Score manually.', 'needs_manual': True}
+
+    conn = get_db()
+    row = to_dict(conn.execute("SELECT * FROM voice_note_screens WHERE id=?", (vn_id,)).fetchone())
+    conn.close()
+    if not row:
+        return {'ok': False, 'error': 'Screen not found'}
+
+    transcript = (row.get('transcript') or '').strip()
+    if len(transcript) < 20:
+        return {'ok': False, 'error': 'Transcript too short to score. Please verify the transcript.'}
+
+    prompt = f"""You are scoring a Dutch cold-calling candidate based on their voice note transcript.
+The candidate is applying for a cold calling / appointment setting / sales role in the Netherlands.
+The company (Maple) recruits Dutch-speaking remote sales talent.
+
+Rate each dimension from 1 (very poor) to 10 (excellent).
+Be critical and realistic. Do not give 7-8 unless genuinely earned.
+
+TRANSCRIPT:
+{transcript[:3000]}
+
+Return ONLY valid JSON — no explanation outside the JSON block:
+{{
+  "score_clarity": <1-10>,
+  "score_energy": <1-10>,
+  "score_dutch_level": <1-10>,
+  "score_structure": <1-10>,
+  "score_confidence": <1-10>,
+  "score_objection_handling": <1-10>,
+  "score_sales_instinct": <1-10>,
+  "score_coachability": <1-10>,
+  "ai_strengths": "<2-3 key strengths observed in the voice note>",
+  "ai_risks": "<2-3 red flags or concerns>",
+  "ai_verdict": "<one sentence overall judgment: would you move this person forward?>",
+  "ai_recommendation": "<exact next action: Plan Test Call / Send to B-pipeline / Nurture / Reject>"
+}}
+
+Scoring guide:
+- score_clarity: How clear and articulate is their speech? Can you understand every word?
+- score_energy: Do they sound energetic, motivated, alive? Cold calling needs energy.
+- score_dutch_level: Is their Dutch native/near-native? Grade strictly: accent, grammar, fluency.
+- score_structure: Do they have a logical intro, body, close? Are they rambling?
+- score_confidence: Do they sound confident and assertive (not arrogant)?
+- score_objection_handling: Did they handle the "why should we hire you" angle well?
+- score_sales_instinct: Do they show commercial thinking, positioning, value communication?
+- score_coachability: Do they show self-awareness, openness to feedback, growth mindset?"""
+
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        return {'ok': False, 'error': 'anthropic package not installed. Run: pip install anthropic', 'needs_manual': True}
+
+    try:
+        client = _anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=1024,
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        raw = msg.content[0].text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith('```'):
+            raw = raw.split('\n', 1)[1] if '\n' in raw else raw
+            raw = raw.rsplit('```', 1)[0].strip()
+        scores = _json.loads(raw)
+    except _json.JSONDecodeError as e:
+        return {'ok': False, 'error': f'AI returned invalid JSON: {e}'}
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+
+    # Compute weighted total
+    total, decision = _compute_voice_score(scores)
+
+    update_data = {
+        'score_clarity':             int(scores.get('score_clarity', 0)),
+        'score_energy':              int(scores.get('score_energy', 0)),
+        'score_dutch_level':         int(scores.get('score_dutch_level', 0)),
+        'score_structure':           int(scores.get('score_structure', 0)),
+        'score_confidence':          int(scores.get('score_confidence', 0)),
+        'score_objection_handling':  int(scores.get('score_objection_handling', 0)),
+        'score_sales_instinct':      int(scores.get('score_sales_instinct', 0)),
+        'score_coachability':        int(scores.get('score_coachability', 0)),
+        'total_voice_score':         total,
+        'voice_decision':            decision,
+        'ai_strengths':              scores.get('ai_strengths', ''),
+        'ai_risks':                  scores.get('ai_risks', ''),
+        'ai_verdict':                scores.get('ai_verdict', ''),
+        'ai_recommendation':         scores.get('ai_recommendation', ''),
+        'status':                    'Scored',
+        'scored_at':                 now(),
+    }
+    _update_vn(update_data, vn_id)
+    return {'ok': True, 'scores': update_data, 'total': total, 'decision': decision}
+
+
+def save_manual_transcript(vn_id: int, transcript: str) -> dict:
+    """Save a manually pasted transcript and mark status."""
+    transcript = (transcript or '').strip()
+    if not transcript:
+        return {'ok': False, 'error': 'Transcript is empty'}
+    _update_vn({
+        'transcript': transcript,
+        'transcript_source': 'Manual',
+        'transcript_error': None,
+        'audio_fetch_status': 'Manual',
+        'status': 'Transcribed',
+    }, vn_id)
+    return {'ok': True}
+
+
+def save_manual_scores(vn_id: int, data: dict) -> dict:
+    """Save manually entered scores, compute total + decision."""
+    score_fields = [
+        'score_clarity', 'score_energy', 'score_dutch_level', 'score_structure',
+        'score_confidence', 'score_objection_handling', 'score_sales_instinct',
+        'score_coachability',
+    ]
+    scores = {}
+    for f in score_fields:
+        try:
+            scores[f] = max(0, min(10, int(data.get(f, 0) or 0)))
+        except (ValueError, TypeError):
+            scores[f] = 0
+
+    total, decision = _compute_voice_score(scores)
+    update = dict(scores)
+    update.update({
+        'total_voice_score': total,
+        'voice_decision':    decision,
+        'ai_verdict':        (data.get('ai_verdict') or '').strip() or None,
+        'ai_strengths':      (data.get('ai_strengths') or '').strip() or None,
+        'ai_risks':          (data.get('ai_risks') or '').strip() or None,
+        'ai_recommendation': (data.get('ai_recommendation') or '').strip() or None,
+        'status':            'Scored',
+        'scored_at':         now(),
+    })
+    _update_vn(update, vn_id)
+    return {'ok': True, 'total': total, 'decision': decision}
+
+
+def _update_vn(data: dict, vn_id: int):
+    """Internal helper — write any subset of fields to voice_note_screens."""
+    if not data:
+        return
+    sets = ', '.join(f'{k}=?' for k in data)
+    vals = list(data.values()) + [vn_id]
+    conn = get_db()
+    conn.execute(f"UPDATE voice_note_screens SET {sets} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def create_voice_note_screen(data: dict) -> int:
+    """Create a new voice note screen record. Returns new id."""
+    conn = get_db()
+    fields = [f for f in _VN_FIELDS if f in data]
+    vals   = [data[f] for f in fields]
+    ph     = ','.join(['?'] * len(fields))
+    cols   = ','.join(fields)
+    c = conn.execute(f"INSERT INTO voice_note_screens ({cols}) VALUES ({ph})", vals)
+    conn.commit()
+    rid = c.lastrowid
+    conn.close()
+    return rid
+
+
+def get_voice_note_screen(vn_id: int) -> dict:
+    conn = get_db()
+    row  = to_dict(conn.execute(
+        "SELECT vn.*, c.full_name AS linked_candidate_name "
+        "FROM voice_note_screens vn "
+        "LEFT JOIN cold_caller_candidates c ON c.id = vn.candidate_id "
+        "WHERE vn.id=?", (vn_id,)).fetchone())
+    conn.close()
+    return row
+
+
+def get_voice_note_screens(candidate_id=None, status='', decision='') -> list:
+    conn = get_db()
+    q    = ("SELECT vn.*, c.full_name AS linked_candidate_name "
+            "FROM voice_note_screens vn "
+            "LEFT JOIN cold_caller_candidates c ON c.id = vn.candidate_id WHERE 1=1")
+    args = []
+    if candidate_id:
+        q += " AND vn.candidate_id=?"; args.append(candidate_id)
+    if status:
+        q += " AND vn.status=?"; args.append(status)
+    if decision:
+        q += " AND vn.voice_decision=?"; args.append(decision)
+    q += " ORDER BY vn.created_at DESC"
+    rows = to_list(conn.execute(q, args).fetchall())
+    conn.close()
+    return rows
+
+
+def get_voice_note_summary() -> dict:
+    conn = get_db()
+    def _c(sql): return conn.execute(sql).fetchone()[0]
+    try:
+        d = {
+            'total':       _c("SELECT COUNT(*) FROM voice_note_screens"),
+            'pending':     _c("SELECT COUNT(*) FROM voice_note_screens WHERE status='Pending'"),
+            'transcribed': _c("SELECT COUNT(*) FROM voice_note_screens WHERE status='Transcribed'"),
+            'scored':      _c("SELECT COUNT(*) FROM voice_note_screens WHERE status='Scored'"),
+            'approved':    _c("SELECT COUNT(*) FROM voice_note_screens WHERE status='Approved'"),
+            'rejected':    _c("SELECT COUNT(*) FROM voice_note_screens WHERE status='Rejected'"),
+            'a_candidates':_c("SELECT COUNT(*) FROM voice_note_screens WHERE voice_decision='A-Candidate'"),
+            'b_candidates':_c("SELECT COUNT(*) FROM voice_note_screens WHERE voice_decision='B-Candidate'"),
+        }
+    except Exception:
+        d = {k: 0 for k in ('total','pending','transcribed','scored','approved','rejected','a_candidates','b_candidates')}
+    conn.close()
+    return d
+
+
+def approve_voice_note(vn_id: int) -> dict:
+    """Approve a voice note screen. Creates 'Plan Test Call' action task."""
+    row = get_voice_note_screen(vn_id)
+    if not row:
+        return {'ok': False, 'error': 'Not found'}
+    _update_vn({'status': 'Approved', 'reviewed_at': now()}, vn_id)
+
+    # Create action task
+    task_id = None
+    try:
+        name  = row.get('candidate_name') or 'Candidate'
+        score = row.get('total_voice_score') or 0
+        dec   = row.get('voice_decision') or ''
+        verdict = row.get('ai_verdict') or ''
+        task_data = {
+            'task_type':    'Plan Test Call',
+            'title':        f'Plan Test Call — {name}',
+            'description':  f'Voice note approved. Score: {score}/100 ({dec}). {verdict}'.strip(),
+            'priority':     'High' if dec == 'A-Candidate' else 'Medium',
+            'status':       'Open',
+            'owner':        'Rutger',
+            'related_type': 'voice_note_screen',
+            'related_id':   vn_id,
+        }
+        if row.get('candidate_id'):
+            task_data['candidate_id'] = row['candidate_id']
+        task_id = create_action_task(task_data)
+    except Exception:
+        pass
+
+    return {'ok': True, 'task_id': task_id}
+
+
+def reject_voice_note(vn_id: int, reason: str = '') -> dict:
+    """Reject a voice note screen. Creates 'Reject Candidate' action task."""
+    row = get_voice_note_screen(vn_id)
+    if not row:
+        return {'ok': False, 'error': 'Not found'}
+    _update_vn({'status': 'Rejected', 'reviewed_at': now()}, vn_id)
+
+    task_id = None
+    try:
+        name = row.get('candidate_name') or 'Candidate'
+        task_data = {
+            'task_type':    'Reject Candidate',
+            'title':        f'Reject Candidate — {name}',
+            'description':  reason or f'Voice note rejected. Score: {row.get("total_voice_score", 0)}/100 ({row.get("voice_decision", "")}).',
+            'priority':     'Low',
+            'status':       'Open',
+            'owner':        'Rutger',
+            'related_type': 'voice_note_screen',
+            'related_id':   vn_id,
+        }
+        if row.get('candidate_id'):
+            task_data['candidate_id'] = row['candidate_id']
+        task_id = create_action_task(task_data)
+    except Exception:
+        pass
+
+    return {'ok': True, 'task_id': task_id}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMMAND CENTER / DASHBOARD DATA
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_dashboard_data() -> dict:
+    """
+    Aggregates all data needed by the Command Center dashboard.
+    Returns a single dict. Safe even if tables don't exist yet.
+    """
+    conn = get_db()
+    def _c(sql, default=0):
+        try: return conn.execute(sql).fetchone()[0]
+        except Exception: return default
+
+    d = {}
+
+    # ── Pipeline counts ────────────────────────────────────────────────────────
+    d['candidates_total'] = _c("SELECT COUNT(*) FROM cold_caller_candidates")
+    d['candidates_new'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='found'")
+    d['candidates_contacted'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='contacted'")
+    d['candidates_replied'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='replied'")
+    d['candidates_interview'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='interview'")
+    d['candidates_placed'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='placed'")
+    d['candidates_rejected'] = _c("SELECT COUNT(*) FROM cold_caller_candidates WHERE status='rejected'")
+
+    # ── Research ──────────────────────────────────────────────────────────────
+    d['research_sources_unprocessed'] = _c(
+        "SELECT COUNT(*) FROM candidate_sources WHERE processed=0")
+    d['research_queue_new'] = _c(
+        "SELECT COUNT(*) FROM candidate_research_queue WHERE status='New'")
+    d['research_queue_needs_review'] = _c(
+        "SELECT COUNT(*) FROM candidate_research_queue WHERE status='Needs Review'")
+    d['research_queue_approved'] = _c(
+        "SELECT COUNT(*) FROM candidate_research_queue WHERE status='Approved'")
+
+    # ── Action tasks ──────────────────────────────────────────────────────────
+    try:
+        d['tasks_open'] = _c("SELECT COUNT(*) FROM action_tasks WHERE status='Open'")
+        d['tasks_overdue'] = _c(
+            "SELECT COUNT(*) FROM action_tasks WHERE status='Open' "
+            "AND due_date IS NOT NULL AND due_date < datetime('now')")
+        d['tasks_needs_approval'] = _c(
+            "SELECT COUNT(*) FROM action_tasks WHERE status='Needs Approval'")
+        # Top overdue task
+        overdue = conn.execute(
+            "SELECT * FROM action_tasks WHERE status='Open' "
+            "AND due_date IS NOT NULL AND due_date < datetime('now') "
+            "ORDER BY priority DESC, due_date ASC LIMIT 1"
+        ).fetchone()
+        d['top_overdue_task'] = to_dict(overdue)
+        # Top open task (highest priority)
+        top_task = conn.execute(
+            "SELECT * FROM action_tasks WHERE status='Open' "
+            "ORDER BY CASE priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, "
+            "due_date ASC LIMIT 1"
+        ).fetchone()
+        d['top_task'] = to_dict(top_task)
+    except Exception:
+        d['tasks_open'] = 0
+        d['tasks_overdue'] = 0
+        d['tasks_needs_approval'] = 0
+        d['top_overdue_task'] = None
+        d['top_task'] = None
+
+    # ── Voice notes ───────────────────────────────────────────────────────────
+    try:
+        d['voice_notes_pending'] = _c(
+            "SELECT COUNT(*) FROM voice_note_screens WHERE status IN ('Pending','Transcribed')")
+        d['voice_notes_scored'] = _c(
+            "SELECT COUNT(*) FROM voice_note_screens WHERE status='Scored'")
+        d['voice_notes_a'] = _c(
+            "SELECT COUNT(*) FROM voice_note_screens WHERE voice_decision='A-Candidate'")
+    except Exception:
+        d['voice_notes_pending'] = 0
+        d['voice_notes_scored'] = 0
+        d['voice_notes_a'] = 0
+
+    # ── Observer / agents ──────────────────────────────────────────────────────
+    try:
+        d['observer_open'] = _c(
+            "SELECT COUNT(*) FROM agent_logs "
+            "WHERE issue != '' AND issue IS NOT NULL "
+            "AND created_at > datetime('now', '-1 day')")
+    except Exception:
+        d['observer_open'] = 0
+
+    try:
+        agents = to_list(conn.execute(
+            "SELECT id, name, type, enabled, last_run_at, latest_output, current_issue, recommendation "
+            "FROM agents ORDER BY type").fetchall())
+        d['agents'] = agents
+    except Exception:
+        d['agents'] = []
+
+    # ── "Needs Approval" items ────────────────────────────────────────────────
+    needs_approval = []
+    try:
+        rq_review = to_list(conn.execute(
+            "SELECT id, name, score, level, status FROM candidate_research_queue "
+            "WHERE status IN ('New','Needs Review') ORDER BY score DESC LIMIT 5"
+        ).fetchall())
+        for r in rq_review:
+            needs_approval.append({
+                'type': 'Research Candidate',
+                'label': r['name'],
+                'detail': f"Score {r['score']} ({r['level']}) — {r['status']}",
+                'url': f"/research/queue/{r['id']}",
+            })
+    except Exception:
+        pass
+    try:
+        approval_tasks = to_list(conn.execute(
+            "SELECT id, title, task_type, priority FROM action_tasks "
+            "WHERE status='Needs Approval' ORDER BY "
+            "CASE priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 ELSE 2 END LIMIT 5"
+        ).fetchall())
+        for t in approval_tasks:
+            needs_approval.append({
+                'type': t['task_type'],
+                'label': t['title'],
+                'detail': f"Priority: {t['priority']}",
+                'url': f"/tasks/{t['id']}",
+            })
+    except Exception:
+        pass
+    try:
+        vn_scored = to_list(conn.execute(
+            "SELECT id, candidate_name, total_voice_score, voice_decision "
+            "FROM voice_note_screens WHERE status='Scored' ORDER BY total_voice_score DESC LIMIT 3"
+        ).fetchall())
+        for v in vn_scored:
+            needs_approval.append({
+                'type': 'Voice Note Review',
+                'label': v['candidate_name'],
+                'detail': f"Score {v['total_voice_score']}/100 — {v['voice_decision']}",
+                'url': f"/voice-notes/{v['id']}",
+            })
+    except Exception:
+        pass
+    d['needs_approval'] = needs_approval
+
+    # ── Highest ROI action ────────────────────────────────────────────────────
+    roi = None
+    if d.get('tasks_overdue', 0) > 0 and d.get('top_overdue_task'):
+        t = d['top_overdue_task']
+        roi = {
+            'title': 'Overdue Task',
+            'description': t.get('title', 'A task is overdue'),
+            'action_label': 'Open Task',
+            'action_url': f"/tasks/{t['id']}",
+            'secondary_label': 'All Tasks',
+            'secondary_url': '/tasks',
+            'level': 'urgent',
+        }
+    elif d.get('research_queue_needs_review', 0) > 0:
+        roi = {
+            'title': 'Candidates Need Review',
+            'description': f"{d['research_queue_needs_review']} candidate(s) in the review queue need your attention.",
+            'action_label': 'Review Candidates',
+            'action_url': '/research/queue?status=Needs+Review',
+            'secondary_label': 'All Queue',
+            'secondary_url': '/research/queue',
+            'level': 'high',
+        }
+    elif d.get('research_queue_new', 0) > 0:
+        roi = {
+            'title': 'New Candidates in Queue',
+            'description': f"{d['research_queue_new']} new candidate(s) waiting for review.",
+            'action_label': 'Open Review Queue',
+            'action_url': '/research/queue',
+            'secondary_label': 'Research Hub',
+            'secondary_url': '/research',
+            'level': 'medium',
+        }
+    elif d.get('research_sources_unprocessed', 0) > 0:
+        roi = {
+            'title': 'Unprocessed Sources',
+            'description': f"{d['research_sources_unprocessed']} source(s) waiting to be processed.",
+            'action_label': 'Process Sources',
+            'action_url': '/research/sources',
+            'secondary_label': 'Add Source',
+            'secondary_url': '/research/url',
+            'level': 'medium',
+        }
+    elif d.get('voice_notes_scored', 0) > 0:
+        roi = {
+            'title': 'Voice Notes Need Review',
+            'description': f"{d['voice_notes_scored']} scored voice note(s) waiting for approval.",
+            'action_label': 'Review Voice Notes',
+            'action_url': '/voice-notes?status=Scored',
+            'secondary_label': 'Screen New',
+            'secondary_url': '/voice-notes/new',
+            'level': 'medium',
+        }
+    else:
+        roi = {
+            'title': 'Find Candidates',
+            'description': 'Run the Candidate Research Worker to find new sales talent.',
+            'action_label': 'Add Source',
+            'action_url': '/research/url',
+            'secondary_label': 'Research Hub',
+            'secondary_url': '/research',
+            'level': 'info',
+        }
+    d['highest_roi'] = roi
+
+    conn.close()
+    return d

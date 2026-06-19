@@ -1,147 +1,241 @@
 {% extends "base.html" %}
-
-{% block title %}Dashboard — Maple Cold Caller{% end %}
+{% block title %}Command Center — Maple Growth OS{% end %}
 
 {% block header %}
-<h1 class="text-lg font-semibold text-white">Dashboard</h1>
+<div>
+  <h1 class="text-lg font-semibold text-white">Maple Command Center</h1>
+  <p class="text-xs text-slate-500">Today's highest ROI actions, agent work and candidate pipeline.</p>
+</div>
 {% end %}
 
 {% block header_actions %}
-<a href="/candidates/new" class="hidden sm:inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
-  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-  </svg>
-  Add Candidate
+<a href="/research/url"
+   class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  + Find Candidates
 </a>
 {% end %}
 
 {% block content %}
 
-<!-- Stat Cards Row 1 -->
-<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-6">
+{% set roi = data.get('highest_roi') or {} %}
 
-  <a href="/campaigns" class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-indigo-500 transition-colors group">
-    <p class="text-2xl font-bold text-white">{{ stats['campaigns'] }}</p>
-    <p class="text-xs text-slate-400 mt-0.5">Total Campaigns</p>
-    <p class="text-xs text-indigo-400 mt-1">{{ stats['active_campaigns'] }} active</p>
-  </a>
-
-  <a href="/profiles" class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-indigo-500 transition-colors">
-    <p class="text-2xl font-bold text-white">{{ stats['profiles'] }}</p>
-    <p class="text-xs text-slate-400 mt-0.5">Caller Profiles</p>
-    <p class="text-xs text-slate-500 mt-1">Ideal templates</p>
-  </a>
-
-  <a href="/candidates" class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-indigo-500 transition-colors">
-    <p class="text-2xl font-bold text-white">{{ stats['candidates'] }}</p>
-    <p class="text-xs text-slate-400 mt-0.5">Candidates</p>
-    <p class="text-xs text-amber-400 mt-1">{{ stats['in_interview'] }} in interview</p>
-  </a>
-
-  <a href="/candidates?status=placed" class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-green-500 transition-colors">
-    <p class="text-2xl font-bold text-green-400">{{ stats['placed'] }}</p>
-    <p class="text-xs text-slate-400 mt-0.5">Placed</p>
-    <p class="text-xs text-green-500 mt-1">Callers deployed</p>
-  </a>
-
-  <a href="/matches" class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-indigo-500 transition-colors">
-    <p class="text-2xl font-bold text-white">{{ stats['match_scores'] }}</p>
-    <p class="text-xs text-slate-400 mt-0.5">Match Scores</p>
-    <p class="text-xs text-slate-500 mt-1">Evaluated pairs</p>
-  </a>
-
-  <a href="/outreach" class="bg-slate-800 border border-slate-700 rounded-xl p-4 hover:border-indigo-500 transition-colors">
-    <p class="text-2xl font-bold text-white">{{ stats['outreach'] }}</p>
-    <p class="text-xs text-slate-400 mt-0.5">Outreach Items</p>
-    <p class="text-xs text-blue-400 mt-1">{{ stats['pending_outreach'] }} pending</p>
-  </a>
-
-</div>
-
-<!-- Two-column layout -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-  <!-- Recent Candidates -->
-  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-      <h2 class="font-semibold text-white text-sm">Recent Candidates</h2>
-      <a href="/candidates" class="text-xs text-indigo-400 hover:text-indigo-300">View all →</a>
-    </div>
-    {% if stats['recent_candidates'] %}
-    <ul class="divide-y divide-slate-700">
-      {% for c in stats['recent_candidates'] %}
-      <li>
-        <a href="/candidates/{{ c['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
-          <div class="w-8 h-8 rounded-full bg-indigo-700 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
-            {{ c['full_name'][0].upper() if c['full_name'] else '?' }}
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-white truncate">{{ c['full_name'] }}</p>
-            <p class="text-xs text-slate-400 truncate">{{ c['current_role'] or 'No role listed' }}</p>
-          </div>
-          <div>
-            <span class="badge {% if c['status'] == 'placed' %}bg-green-900 text-green-300{% elif c['status'] == 'rejected' %}bg-red-900 text-red-300{% elif c['status'] == 'interview' %}bg-amber-900 text-amber-300{% elif c['status'] == 'qualified' %}bg-violet-900 text-violet-300{% elif c['status'] == 'replied' %}bg-indigo-900 text-indigo-300{% elif c['status'] == 'contacted' %}bg-blue-900 text-blue-300{% else %}bg-slate-700 text-slate-300{% end %}">{{ c['status'] }}</span>
-          </div>
-        </a>
-      </li>
-      {% end %}
-    </ul>
-    {% else %}
-    <div class="px-5 py-8 text-center text-slate-500 text-sm">
-      No candidates yet. <a href="/candidates/new" class="text-indigo-400 hover:underline">Add one →</a>
-    </div>
+<!-- Highest ROI Action -->
+{% if roi %}
+<div class="mb-6 rounded-xl border px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-4
+            {% if roi.get('level') == 'urgent' %}bg-red-950/30 border-red-800/40
+            {% elif roi.get('level') == 'high' %}bg-amber-950/30 border-amber-800/40
+            {% else %}bg-indigo-950/30 border-indigo-800/40{% end %}">
+  <div class="flex-1">
+    <p class="text-xs font-semibold uppercase tracking-wide
+              {% if roi.get('level') == 'urgent' %}text-red-400
+              {% elif roi.get('level') == 'high' %}text-amber-400
+              {% else %}text-indigo-400{% end %} mb-0.5">
+      {% if roi.get('level') == 'urgent' %}🔴 Urgent — {% elif roi.get('level') == 'high' %}🟠 High Priority — {% else %}⭐ Next Best Action — {% end %}{{ roi.get('title', '') }}
+    </p>
+    <p class="text-sm text-slate-200">{{ roi.get('description', '') }}</p>
+  </div>
+  <div class="flex gap-2 flex-shrink-0">
+    <a href="{{ roi.get('action_url', '/') }}"
+       class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      {{ roi.get('action_label', 'Go') }}
+    </a>
+    {% if roi.get('secondary_url') %}
+    <a href="{{ roi['secondary_url'] }}"
+       class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+      {{ roi.get('secondary_label', '') }}
+    </a>
     {% end %}
   </div>
-
-  <!-- Upcoming Interviews -->
-  <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-      <h2 class="font-semibold text-white text-sm">Upcoming Interviews</h2>
-      <a href="/interviews" class="text-xs text-indigo-400 hover:text-indigo-300">View all →</a>
-    </div>
-    {% if stats['upcoming_interviews'] %}
-    <ul class="divide-y divide-slate-700">
-      {% for i in stats['upcoming_interviews'] %}
-      <li>
-        <a href="/interviews/{{ i['id'] }}" class="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/50 transition-colors">
-          <div class="w-8 h-8 rounded-lg bg-amber-800 flex items-center justify-center flex-shrink-0">
-            <svg class="w-4 h-4 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-            </svg>
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-white truncate">{{ i['candidate_name'] or 'Unknown' }}</p>
-            <p class="text-xs text-slate-400">{{ i['client_name'] or 'Unknown campaign' }} · {{ i['interview_date'] or 'TBD' }} {{ i['interview_time'] or '' }}</p>
-          </div>
-          <span class="badge bg-amber-900 text-amber-300">{{ i['interview_format'] or 'Video' }}</span>
-        </a>
-      </li>
-      {% end %}
-    </ul>
-    {% else %}
-    <div class="px-5 py-8 text-center text-slate-500 text-sm">
-      No interviews scheduled. <a href="/interviews/new" class="text-indigo-400 hover:underline">Schedule one →</a>
-    </div>
-    {% end %}
-  </div>
-
 </div>
+{% end %}
 
-<!-- Quick links -->
-<div class="mt-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-  {% set quick = [
-    ('/campaigns/new', '+ Campaign', 'bg-indigo-600 hover:bg-indigo-500'),
-    ('/profiles/new', '+ Profile', 'bg-violet-700 hover:bg-violet-600'),
-    ('/candidates/new', '+ Candidate', 'bg-blue-700 hover:bg-blue-600'),
-    ('/matches/new', '+ Match Score', 'bg-cyan-700 hover:bg-cyan-600'),
-    ('/outreach/new', '+ Outreach', 'bg-teal-700 hover:bg-teal-600'),
-    ('/interviews/new', '+ Interview', 'bg-amber-700 hover:bg-amber-600'),
+<!-- Quick Action Cards -->
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+  {% set quick_actions = [
+    ('🔍', 'Find Candidates',    '/research/url'),
+    ('👥', 'Review Candidates',  '/research/queue'),
+    ('📬', 'Follow-ups & Tasks', '/tasks'),
+    ('🎙', 'Voice Screening',    '/voice-notes'),
+    ('📅', 'Interviews',         '/interviews'),
   ] %}
-  {% for url, label, cls in quick %}
-  <a href="{{ url }}" class="{{ cls }} text-white text-sm font-medium px-3 py-2.5 rounded-lg text-center transition-colors">
-    {{ label }}
+  {% for icon, label, url in quick_actions %}
+  <a href="{{ url }}"
+     class="bg-slate-800 border border-slate-700 hover:border-indigo-500 rounded-xl p-4 flex flex-col items-center text-center gap-2 transition-colors group">
+    <span class="text-2xl">{{ icon }}</span>
+    <span class="text-xs font-medium text-slate-300 group-hover:text-white leading-tight">{{ label }}</span>
   </a>
   {% end %}
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+  <!-- Left: pipeline + needs approval -->
+  <div class="lg:col-span-2 space-y-5">
+
+    <!-- Pipeline -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl p-5">
+      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">Candidate Pipeline</p>
+      <div class="grid grid-cols-4 sm:grid-cols-7 gap-2">
+        {% set pipeline = [
+          ('New',       str(data.get('candidates_new', 0)),        'text-slate-300',       '/candidates'),
+          ('Contacted', str(data.get('candidates_contacted', 0)),  'text-blue-300',        '/candidates?status=contacted'),
+          ('Replied',   str(data.get('candidates_replied', 0)),    'text-indigo-300',      '/candidates?status=replied'),
+          ('Interview', str(data.get('candidates_interview', 0)),  'text-amber-300',       '/interviews'),
+          ('Placed',    str(data.get('candidates_placed', 0)),     'text-green-300',       '/candidates?status=placed'),
+          ('Rejected',  str(data.get('candidates_rejected', 0)),   'text-red-400',         '/candidates?status=rejected'),
+          ('Total',     str(data.get('candidates_total', 0)),      'text-white',           '/candidates'),
+        ] %}
+        {% for label, val, cls, href in pipeline %}
+        <a href="{{ href }}" class="bg-slate-900 rounded-lg p-3 text-center hover:bg-slate-700 transition-colors">
+          <p class="text-lg font-bold {{ cls }}">{{ val }}</p>
+          <p class="text-xs text-slate-500 mt-0.5">{{ label }}</p>
+        </a>
+        {% end %}
+      </div>
+    </div>
+
+    <!-- Needs Approval -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Needs Your Approval</p>
+        {% set total_approval = len(data.get('needs_approval') or []) %}
+        {% if total_approval > 0 %}
+        <span class="badge bg-amber-900 text-amber-300">{{ total_approval }}</span>
+        {% end %}
+      </div>
+      {% set approvals = data.get('needs_approval') or [] %}
+      {% if approvals %}
+      <div class="divide-y divide-slate-700">
+        {% for item in approvals %}
+        <a href="{{ item['url'] }}"
+           class="flex items-start gap-3 px-5 py-3.5 hover:bg-slate-700/50 transition-colors">
+          <div class="flex-1 min-w-0">
+            <span class="badge bg-slate-700 text-slate-400 text-xs mb-1">{{ item['type'] }}</span>
+            <p class="text-sm font-medium text-white truncate">{{ item['label'] }}</p>
+            <p class="text-xs text-slate-500">{{ item['detail'] }}</p>
+          </div>
+          <span class="text-slate-500 flex-shrink-0 mt-2">→</span>
+        </a>
+        {% end %}
+      </div>
+      {% else %}
+      <div class="px-5 py-8 text-center">
+        <p class="text-2xl mb-2">✓</p>
+        <p class="text-slate-400 text-sm font-medium">Nothing needs approval right now.</p>
+        <p class="text-slate-600 text-xs mt-1">Add sources or run the research worker to get candidates in the pipeline.</p>
+        <a href="/research/url" class="inline-block mt-3 text-xs text-indigo-400 hover:text-indigo-300">Add Source →</a>
+      </div>
+      {% end %}
+    </div>
+
+    <!-- Research row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {% set research_stats = [
+        ('Sources to Process', str(data.get('research_sources_unprocessed', 0)),
+         'text-amber-300' if data.get('research_sources_unprocessed', 0) > 0 else 'text-slate-500',
+         '/research/sources'),
+        ('New in Queue',       str(data.get('research_queue_new', 0)),
+         'text-blue-300' if data.get('research_queue_new', 0) > 0 else 'text-slate-500',
+         '/research/queue'),
+        ('Needs Review',       str(data.get('research_queue_needs_review', 0)),
+         'text-amber-300' if data.get('research_queue_needs_review', 0) > 0 else 'text-slate-500',
+         '/research/queue?status=Needs+Review'),
+        ('Voice Notes Scored', str(data.get('voice_notes_scored', 0)),
+         'text-teal-300' if data.get('voice_notes_scored', 0) > 0 else 'text-slate-500',
+         '/voice-notes?status=Scored'),
+      ] %}
+      {% for label, val, cls, href in research_stats %}
+      <a href="{{ href }}" class="bg-slate-800 border border-slate-700 hover:border-slate-500 rounded-xl p-4 transition-colors">
+        <p class="text-2xl font-bold {{ cls }}">{{ val }}</p>
+        <p class="text-xs text-slate-500 mt-0.5">{{ label }}</p>
+      </a>
+      {% end %}
+    </div>
+
+  </div>
+
+  <!-- Right: agents + quick links -->
+  <div class="space-y-4">
+
+    <!-- Agent Status -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Agent Status</p>
+        <a href="/agents" class="text-xs text-indigo-400 hover:text-indigo-300">All Agents →</a>
+      </div>
+      {% set agents = data.get('agents') or [] %}
+      {% if agents %}
+      <div class="divide-y divide-slate-700">
+        {% for agent in agents %}
+        <div class="px-4 py-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-sm font-medium text-white truncate flex-1">{{ agent['name'] }}</span>
+            {% if agent['enabled'] %}
+            <span class="badge bg-green-900 text-green-300 text-xs">on</span>
+            {% else %}
+            <span class="badge bg-slate-700 text-slate-400 text-xs">off</span>
+            {% end %}
+          </div>
+          {% if agent.get('current_issue') %}
+          <p class="text-xs text-amber-300 truncate">⚠ {{ agent['current_issue'][:80] }}</p>
+          {% elif agent.get('latest_output') %}
+          <p class="text-xs text-slate-500 truncate">{{ (agent['latest_output'] or '')[:80] }}</p>
+          {% else %}
+          <p class="text-xs text-slate-600 italic">Not run yet</p>
+          {% end %}
+          <div class="flex gap-1.5 mt-2">
+            <form method="POST" action="/agents/{{ agent['id'] }}/run">
+              <button type="submit" {% if not agent['enabled'] %}disabled{% end %}
+                      class="text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white px-2.5 py-1 rounded-md transition-colors">
+                ▶ Run
+              </button>
+            </form>
+            <a href="/agents/{{ agent['id'] }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1 rounded-md transition-colors">Logs</a>
+          </div>
+        </div>
+        {% end %}
+      </div>
+      {% else %}
+      <div class="px-5 py-6 text-center text-slate-500 text-sm">
+        <p>No agents configured.</p>
+        <a href="/agents" class="text-indigo-400 text-xs hover:text-indigo-300 mt-1 inline-block">Set up agents →</a>
+      </div>
+      {% end %}
+    </div>
+
+    <!-- Quick Links -->
+    <div class="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-700">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Quick Links</p>
+      </div>
+      <div class="divide-y divide-slate-700 text-sm">
+        {% set open_tasks = data.get('tasks_open', 0) %}
+        {% set queue_new = data.get('research_queue_new', 0) %}
+        <a href="/research/url" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Add Source / URL</span><span class="text-slate-500 text-xs">→</span>
+        </a>
+        <a href="/research" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Research Hub</span><span class="text-slate-500 text-xs">→</span>
+        </a>
+        <a href="/research/queue" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Candidate Review Queue</span>
+          <span class="text-{% if queue_new > 0 %}blue-400{% else %}slate-500{% end %} text-xs">{{ queue_new }} new</span>
+        </a>
+        <a href="/tasks" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Action Queue</span>
+          <span class="text-{% if open_tasks > 0 %}amber-400{% else %}slate-500{% end %} text-xs">{{ open_tasks }} open</span>
+        </a>
+        <a href="/observer" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Observer Agent</span><span class="text-slate-500 text-xs">→</span>
+        </a>
+        <a href="/search-missions" class="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700 transition-colors">
+          <span class="text-slate-300">Search Missions</span><span class="text-slate-500 text-xs">→</span>
+        </a>
+      </div>
+    </div>
+
+  </div>
+
 </div>
 
 {% end %}

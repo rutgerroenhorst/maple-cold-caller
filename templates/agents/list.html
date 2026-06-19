@@ -2,92 +2,158 @@
 {% block title %}Agents — Maple Growth OS{% end %}
 
 {% block header %}
-<h1 class="text-lg font-semibold text-white">Agent Control Centre</h1>
+<div>
+  <h1 class="text-lg font-semibold text-white">Agent Workroom</h1>
+  <p class="text-xs text-slate-500">Your AI workers. Run them manually or let them run on schedule.</p>
+</div>
 {% end %}
 
 {% block header_actions %}
-<a href="/search-missions" class="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 transition-colors">Search Missions</a>
-<a href="/observer" class="text-xs bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded-lg transition-colors">Observer →</a>
+<a href="/observer" class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
+  Observer →
+</a>
 {% end %}
 
 {% block content %}
 
-<div class="mb-5 bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-sm text-slate-400">
-  <p><span class="text-white font-medium">Safety mode active.</span>
+<!-- Safety notice -->
+<div class="mb-5 bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-xs text-slate-400 flex items-start gap-2">
+  <span class="text-slate-500 mt-0.5">🔒</span>
+  <span><span class="text-slate-300 font-medium">Safety mode active.</span>
   All external outreach uses <span class="text-indigo-300">Prepare → Review → Human Send → Mark Sent</span>.
-  Auto-send is permanently forbidden for all agents.</p>
+  Auto-send is permanently forbidden for all agents.</span>
 </div>
 
-<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-{% for agent in agents %}
-<div class="bg-slate-800 border border-slate-700 rounded-xl p-5 flex flex-col gap-3
-            {% if not agent['enabled'] %}opacity-60{% end %}">
+{% if not agents %}
+<div class="bg-slate-800 border border-slate-700 rounded-xl px-6 py-12 text-center">
+  <p class="text-2xl mb-3">🤖</p>
+  <p class="text-slate-300 font-medium text-sm mb-1">No agents configured yet.</p>
+  <p class="text-slate-500 text-xs">Agents are created automatically when the app starts. Try restarting the server.</p>
+</div>
+{% else %}
 
-  <!-- Header row -->
-  <div class="flex items-start gap-3">
+<!-- Agent type labels -->
+{% set type_labels = {
+  'candidate_research': 'Candidate Research Worker',
+  'talent_scout':       'Talent Scout',
+  'follow_up':          'Follow-up Agent',
+  'observer':           'Observer Agent',
+  'outreach_generator': 'Outreach Generator',
+} %}
+
+<div class="space-y-4">
+{% for agent in agents %}
+{% set type_label = type_labels.get(agent.get('type') or '', agent.get('name') or 'Agent') %}
+{% set has_issue = agent.get('current_issue') and agent['current_issue'] != '' %}
+{% set has_output = agent.get('latest_output') and agent['latest_output'] != '' %}
+
+<div class="bg-slate-800 border {% if has_issue %}border-amber-900/40{% else %}border-slate-700{% end %} rounded-xl overflow-hidden
+            {% if not agent['enabled'] %}opacity-70{% end %}">
+
+  <!-- Header -->
+  <div class="px-5 py-4 flex items-start gap-4 border-b border-slate-700/50">
+    <!-- Status indicator -->
+    <div class="flex-shrink-0 mt-0.5">
+      <div class="w-2.5 h-2.5 rounded-full mt-1.5
+                  {% if not agent['enabled'] %}bg-slate-600
+                  {% elif has_issue %}bg-amber-400
+                  {% else %}bg-green-500{% end %}"></div>
+    </div>
+
     <div class="flex-1 min-w-0">
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="text-sm font-semibold text-white">{{ agent['name'] }}</span>
-        <span class="badge bg-slate-700 text-slate-300 text-xs">{{ agent['type'] or 'agent' }}</span>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-base font-semibold text-white">{{ type_label }}</span>
+        <span class="badge bg-slate-700 text-slate-400 text-xs">{{ agent.get('type') or 'agent' }}</span>
         {% if agent['enabled'] %}
-        <span class="badge bg-green-900 text-green-300 text-xs">enabled</span>
+        <span class="badge bg-green-900/60 text-green-400 text-xs">● enabled</span>
         {% else %}
-        <span class="badge bg-red-950 text-red-400 text-xs">disabled</span>
+        <span class="badge bg-slate-700 text-slate-500 text-xs">○ disabled</span>
+        {% end %}
+        {% if agent.get('last_run_at') %}
+        <span class="text-xs text-slate-600">Last run: {{ agent['last_run_at'][:16] }}</span>
+        {% else %}
+        <span class="text-xs text-slate-600 italic">Never run</span>
         {% end %}
       </div>
-      <p class="text-xs text-slate-400 mt-1 line-clamp-2">{{ agent['description'] or '' }}</p>
+      {% if agent.get('description') %}
+      <p class="text-xs text-slate-500 mt-1">{{ agent['description'] }}</p>
+      {% end %}
+    </div>
+
+    <!-- Action buttons -->
+    <div class="flex gap-2 flex-shrink-0">
+      <form method="POST" action="/agents/{{ agent['id'] }}/run">
+        <button type="submit" {% if not agent['enabled'] %}disabled{% end %}
+                class="text-sm bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium px-4 py-1.5 rounded-lg transition-colors">
+          ▶ Run
+        </button>
+      </form>
+      <a href="/agents/{{ agent['id'] }}/edit"
+         class="text-sm bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors">Edit</a>
+      <a href="/agents/{{ agent['id'] }}"
+         class="text-sm bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors">Logs</a>
     </div>
   </div>
 
-  <!-- Status row -->
-  <div class="grid grid-cols-2 gap-2 text-xs">
-    <div class="bg-slate-900 rounded-lg p-2">
-      <p class="text-slate-500">Status</p>
-      <p class="text-white font-medium">{{ agent['status'] or 'idle' }}</p>
+  <!-- Body: issue + output + recommendation -->
+  <div class="px-5 py-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+    <!-- Latest output -->
+    <div class="lg:col-span-2">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Latest Output</p>
+      {% if has_output %}
+      <pre class="text-xs text-slate-300 whitespace-pre-wrap font-mono bg-slate-900/70 rounded-lg p-3 max-h-40 overflow-y-auto leading-relaxed">{{ agent['latest_output'][:600] }}{% if len(agent['latest_output']) > 600 %}…{% end %}</pre>
+      {% else %}
+      <div class="bg-slate-900/40 rounded-lg p-4 text-center">
+        <p class="text-xs text-slate-600 italic">No output yet. Click ▶ Run to execute this agent.</p>
+      </div>
+      {% end %}
     </div>
-    <div class="bg-slate-900 rounded-lg p-2">
-      <p class="text-slate-500">Last run</p>
-      <p class="text-white font-medium truncate">{{ agent['last_run_at'][:10] if agent['last_run_at'] else '—' }}</p>
+
+    <!-- Issue + recommendation -->
+    <div class="space-y-3">
+      {% if has_issue %}
+      <div>
+        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Current Issue</p>
+        <div class="bg-amber-950/30 border border-amber-900/30 rounded-lg px-3 py-2.5 text-xs text-amber-300 leading-relaxed">
+          ⚠ {{ agent['current_issue'] }}
+        </div>
+      </div>
+      {% end %}
+
+      {% if agent.get('recommendation') %}
+      <div>
+        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+          {% if has_issue %}Recommended Fix{% else %}Next Action{% end %}
+        </p>
+        <div class="bg-indigo-950/30 border border-indigo-900/30 rounded-lg px-3 py-2.5 text-xs text-indigo-300 leading-relaxed">
+          → {{ agent['recommendation'] }}
+        </div>
+      </div>
+      {% end %}
+
+      {% if not has_issue and not agent.get('recommendation') %}
+      <div class="text-center pt-2">
+        <p class="text-xs text-slate-600 italic">Run the agent to get the latest status and recommendations.</p>
+      </div>
+      {% end %}
+
+      <!-- Enable/disable toggle -->
+      <div class="pt-1 flex items-center justify-between">
+        <span class="text-xs text-slate-600">Schedule: {{ agent.get('schedule') or 'manual' }}</span>
+        <form method="POST" action="/agents/{{ agent['id'] }}/toggle?next=/agents">
+          <button type="submit"
+                  class="text-xs {% if agent['enabled'] %}text-red-500 hover:text-red-400{% else %}text-green-500 hover:text-green-400{% end %} transition-colors">
+            {{ 'Disable' if agent['enabled'] else 'Enable' }}
+          </button>
+        </form>
+      </div>
     </div>
-  </div>
 
-  <!-- Latest output -->
-  {% if agent['latest_output'] %}
-  <div class="bg-slate-900/60 rounded-lg p-3 text-xs text-slate-300 max-h-20 overflow-hidden">
-    {{ agent['latest_output'][:200] }}{% if len(agent['latest_output']) > 200 %}…{% end %}
-  </div>
-  {% end %}
-
-  <!-- Issue + recommendation -->
-  {% if agent['current_issue'] %}
-  <div class="bg-red-950/40 border border-red-900/30 rounded-lg px-3 py-2 text-xs text-red-300">
-    ⚠ {{ agent['current_issue'] }}
-  </div>
-  {% end %}
-  {% if agent['recommendation'] %}
-  <div class="bg-indigo-950/40 border border-indigo-900/30 rounded-lg px-3 py-2 text-xs text-indigo-300">
-    ✅ {{ agent['recommendation'] }}
-  </div>
-  {% end %}
-
-  <!-- Actions -->
-  <div class="flex flex-wrap gap-2 mt-auto pt-1 border-t border-slate-700">
-    <a href="/agents/{{ agent['id'] }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors">Logs</a>
-    <a href="/agents/{{ agent['id'] }}/edit" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg transition-colors">Edit</a>
-    <form method="POST" action="/agents/{{ agent['id'] }}/run" class="inline">
-      <button type="submit" {% if not agent['enabled'] %}disabled{% end %}
-              class="text-xs bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg transition-colors">
-        ▶ Run
-      </button>
-    </form>
-    <form method="POST" action="/agents/{{ agent['id'] }}/toggle?next=/agents" class="inline ml-auto">
-      <button type="submit" class="text-xs {% if agent['enabled'] %}text-red-400 hover:text-red-300{% else %}text-green-400 hover:text-green-300{% end %} transition-colors">
-        {{ 'Disable' if agent['enabled'] else 'Enable' }}
-      </button>
-    </form>
   </div>
 </div>
 {% end %}
 </div>
 
+{% end %}
 {% end %}

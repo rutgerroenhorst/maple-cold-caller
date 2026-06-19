@@ -63,11 +63,14 @@
   {% end %}
 </div>
 {% else %}
-<div class="bg-slate-800 border border-slate-700 rounded-xl p-10 text-center">
-  <p class="text-slate-400 text-sm mb-3">No sources yet.</p>
-  <a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors">
-    Paste First Source
-  </a>
+<div class="bg-slate-800 border border-slate-700 rounded-xl px-8 py-14 text-center">
+  <p class="text-2xl mb-3">🔗</p>
+  <p class="text-white font-semibold text-sm mb-1">No sources added yet</p>
+  <p class="text-slate-500 text-xs mb-5 max-w-sm mx-auto">Sources are LinkedIn search URLs, job boards, or profile pages that the Research Worker reads to find candidates. Add your first source to get started.</p>
+  <div class="flex justify-center gap-3">
+    <a href="/research/url" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Paste First Source</a>
+    <a href="/research" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors">Research Hub →</a>
+  </div>
 </div>
 {% end %}
 

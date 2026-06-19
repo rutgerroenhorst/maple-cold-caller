@@ -106,6 +106,101 @@
   {% end %}
 </div>
 
+<!-- Next Best Action -->
+{% set cstatus = candidate['status'] or 'found' %}
+{% set has_ai = candidate['ai_score'] is not None %}
+<div class="mb-5 bg-slate-800 border {% if not has_ai %}border-violet-900/50{% elif cstatus in ('found','contacted') %}border-indigo-900/50{% elif cstatus in ('qualified','interview') %}border-amber-900/50{% elif cstatus == 'placed' %}border-green-900/40{% else %}border-slate-700{% end %} rounded-xl p-5">
+  <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Next Best Action</p>
+  <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+    <div class="flex-1">
+      {% if not has_ai %}
+      <p class="text-sm text-white font-medium mb-0.5">Score with AI</p>
+      <p class="text-xs text-slate-400">No AI score yet. Run an AI assessment to get a verdict and identify strengths.</p>
+      {% elif cstatus == 'found' %}
+      <p class="text-sm text-white font-medium mb-0.5">Start outreach</p>
+      <p class="text-xs text-slate-400">Candidate is in the pipeline. Prepare and send an outreach message to make contact.</p>
+      {% elif cstatus == 'contacted' %}
+      <p class="text-sm text-white font-medium mb-0.5">Follow up or wait</p>
+      <p class="text-xs text-slate-400">Outreach was sent. Log a follow-up task or wait for a response before proceeding.</p>
+      {% elif cstatus == 'replied' %}
+      <p class="text-sm text-white font-medium mb-0.5">Qualify the candidate</p>
+      <p class="text-xs text-slate-400">Candidate replied. Screen their voice note or mark them as Qualified to move forward.</p>
+      {% elif cstatus == 'qualified' %}
+      <p class="text-sm text-white font-medium mb-0.5">Screen voice note or book interview</p>
+      <p class="text-xs text-slate-400">Candidate is qualified. Screen their voice note or proceed directly to interview.</p>
+      {% elif cstatus == 'interview' %}
+      <p class="text-sm text-white font-medium mb-0.5">Place or reject after interview</p>
+      <p class="text-xs text-slate-400">Interview stage. Make a final decision and update the status to Placed or Rejected.</p>
+      {% elif cstatus == 'placed' %}
+      <p class="text-sm text-green-400 font-medium mb-0.5">✓ Placed</p>
+      <p class="text-xs text-slate-400">This candidate has been placed. No further action needed.</p>
+      {% elif cstatus == 'rejected' %}
+      <p class="text-sm text-slate-400 font-medium mb-0.5">Candidate rejected</p>
+      <p class="text-xs text-slate-500">This candidate has been rejected. Archive or return to queue if circumstances change.</p>
+      {% else %}
+      <p class="text-sm text-white font-medium mb-0.5">Review candidate profile</p>
+      <p class="text-xs text-slate-400">Update the status and score this candidate to continue pipeline processing.</p>
+      {% end %}
+    </div>
+    <div class="flex flex-col gap-2 flex-shrink-0 w-full sm:w-auto">
+      {% if not has_ai %}
+      <button @click="runAIScore()" :disabled="aiLoading"
+              class="bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        🤖 Score with AI
+      </button>
+      <a href="/voice-notes/new" class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        Screen Voice Note
+      </a>
+      {% elif cstatus in ('found','contacted') %}
+      <a href="/outreach/new?candidate_id={{ candidate['id'] }}"
+         class="text-center bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        + Add Outreach
+      </a>
+      <a href="/tasks/new?related_id={{ candidate['id'] }}&related_type=candidate"
+         class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        Create Task
+      </a>
+      {% elif cstatus == 'replied' %}
+      <a href="/voice-notes/new"
+         class="text-center bg-amber-700 hover:bg-amber-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        Screen Voice Note
+      </a>
+      <button @click="setStatus('qualified')"
+              class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        Mark Qualified
+      </button>
+      {% elif cstatus == 'qualified' %}
+      <a href="/voice-notes/new"
+         class="text-center bg-amber-700 hover:bg-amber-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        Screen Voice Note
+      </a>
+      <button @click="setStatus('interview')"
+              class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        Move to Interview
+      </button>
+      {% elif cstatus == 'interview' %}
+      <button @click="setStatus('placed')"
+              class="bg-green-900/60 hover:bg-green-900 text-green-300 text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        ✓ Mark Placed
+      </button>
+      <button @click="setStatus('rejected')"
+              class="bg-red-950/50 hover:bg-red-950 text-red-400 text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        ✗ Reject
+      </button>
+      {% elif cstatus in ('placed', 'rejected') %}
+      <a href="/candidates" class="text-center bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        ← Back to Candidates
+      </a>
+      {% else %}
+      <button @click="runAIScore()" :disabled="aiLoading"
+              class="bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+        🤖 Score with AI
+      </button>
+      {% end %}
+    </div>
+  </div>
+</div>
+
 <!-- 2-col detail -->
 <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
 
